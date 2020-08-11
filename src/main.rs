@@ -71,7 +71,7 @@ static BUFFERS:  Buffers = Buffers {
     ray_camera_uniform_buffer:   BufferInfo { name: "ray_camera_uniform_buffer", size: None,},
     mc_uniform_buffer:           BufferInfo { name: "mc_uniform_buffer",         size: None,},
     mc_counter_buffer:           BufferInfo { name: "mc_counter_buffer",         size: None,},
-    mc_output_buffer:            BufferInfo { name: "mc_output_buffer",          size: Some(64*64*64*16), },
+    mc_output_buffer:            BufferInfo { name: "mc_output_buffer",          size: Some(64*64*64*24), },
     ray_march_output_buffer:     BufferInfo { name: "ray_march_output",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4),},
     ray_debug_buffer:            BufferInfo { name: "ray_debug_buffer",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4 * 4),},
     sphere_tracer_output_buffer: BufferInfo { name: "sphere_tracer_output",      size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 12 * 4),},
@@ -1618,6 +1618,8 @@ impl App {
             instances: 1,
         };
         vertex_buffer_infos.insert("mc_renderer_vb_info".to_string(), mc_renderer_vb_info);
+
+        println!("k[0] == {}", k[0]);
 
         let blocks = create_key_blocks(0, 44000, 1); 
         for i in 0..blocks.len() {

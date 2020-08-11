@@ -1,13 +1,8 @@
 #version 450
 
-#define CUBES_PER_DIMENSION 64 
 #define INTERPOLATE
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
-
-// +--+--+--+--+--+--+--+--+
-// |v0|v1|v2|v3|v4|v5|v6|v7|
-// +--+--+--+--+--+--+--+--+
 
 // The output format of vertex.
 struct Vertex {
@@ -448,13 +443,13 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
    #ifdef INTERPOLATE
      
      if (abs(isovalue - va.w) < 0.0001) {
-        return vec4(va.xyz, 0.1);
+        return vec4(va.xyz, 1.0);
      }
-     else if (abs(isovalue - vb.w) < 0.0001) {
-        return vec4(vb.xyz, 0.2);
+     else if (abs(isovalue - vb.w) < 0.00001) {
+        return vec4(vb.xyz, 1.0);
      }
-     else if (abs(va.w-vb.w) < 0.0001) {
-        return vec4(va.xyz, 0.3);
+     else if (abs(va.w-vb.w) < 0.00001) {
+        return vec4(va.xyz, 1.0);
      }
      
      else
@@ -464,18 +459,18 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
        p.x = va.x + mu * (vb.x - va.x);
        p.y = va.y + mu * (vb.y - va.y);
        p.z = va.z + mu * (vb.z - va.z);
-       p.w = 0.4;
+       p.w = 1.0;
        return p;
      }
    #else
        if (abs(isovalue - va.w) < 0.0001) {
-          return vec4(va.xyz, 0.1);
+          return vec4(va.xyz, 1.0);
        }
        else if (abs(isovalue - vb.w) < 0.0001) {
-          return vec4(vb.xyz, 0.2);
+          return vec4(vb.xyz, 1.0);
        }
        else if (abs(va.w-vb.w) < 0.0001) {
-          return vec4(va.xyz, 0.3);
+          return vec4(va.xyz, 1.0);
        }
        vec4 p;
        float iso = (va.w + vb.w) * 0.5;
@@ -483,7 +478,7 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
        p.x = va.x + mu * (vb.x - va.x);
        p.y = va.y + mu * (vb.y - va.y);
        p.z = va.z + mu * (vb.z - va.z);
-       p.w = 0.4;
+       p.w = 1.0;
        return p;
        //return vec4((va.xyz + vb.xyz) * 0.5, 1.0);
    #endif
@@ -492,18 +487,23 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
 vec4 interpolateN(vec4 na, vec4 nb, float densityA, float densityB, float isovalue)
 {
    #ifdef INTERPOLATE
-     if (abs(isovalue - densityA) < 0.000001) { return vec4(normalize(na.xyz), 0.0); }
-     else if (abs(isovalue - densityB) < 0.000001) { return vec4(normalize(nb.xyz), 0.0);}
-     else if (abs(densityA-densityB) < 0.000001) { return vec4(normalize(na.xyz), 0.0); }
+     if (abs(isovalue - densityA) < 0.00001) {
+	 return vec4(normalize(na.xyz), 0.0);
+      }
+     else if (abs(isovalue - densityB) < 0.00001) {
+	 return vec4(normalize(nb.xyz), 0.0);
+     }
+     else if (abs(densityA-densityB) < 0.00001) {
+         return vec4(normalize(na.xyz), 0.0);
+     }
      
      else
      {
-       vec3 p;
        float mu = (isovalue - densityA) / (densityB - densityA);
        float x = na.x + mu * (nb.x - na.x);
        float y = na.y + mu * (nb.y - na.y);
        float z = na.z + mu * (nb.z - na.z);
-       return vec4(normalize(vec4(x, y, z, 0.0)));
+       return vec4(normalize(vec3(x, y, z)), 0.0);
      }
    #else
        if (abs(isovalue - densityA) < 0.000001) { return vec4(normalize(na.xyz), 0.0); }
