@@ -14,10 +14,10 @@ use crate::buffer::Buffer;
 // M5 : Local sort sub-bucket assignments: 12 * min(floor(2 * n/O_) + floor(n/O^), r * (floor(n/O^))
 
 static LOCAL_SORT_THRESHOLD: u32 = 8192; // 9216 
-static THREADS: u32 = 256;
-static KPT: u32 = 16; //18
+//static THREADS: u32 = 256;
+//static KPT: u32 = 16; //18
 static KPB: u32 = 4096; // 6912;
-static MERGE_THRESHOLD: u32 = 3000; 
+//static MERGE_THRESHOLD: u32 = 3000; 
 
 pub struct KeyBlock {
     pub key_offset: u32,
@@ -67,19 +67,19 @@ pub fn create_key_blocks(start_index: u32, number_of_keys: u32, bucket_id: u32) 
     let mut key_offset = start_index;
 
     while keys_available > 0 {
-        let mut key_count = 0;
+        let mut _key_count = 0;
         if keys_available >= KPB {
             keys_available = keys_available - KPB;
-            key_count = KPB;
+            _key_count = KPB;
         }
         else {
-            key_count = keys_available;
+            _key_count = keys_available;
             keys_available = 0;
         }
 
         key_blocks.push(KeyBlock{
             key_offset: key_offset,
-            key_count: key_count,
+            key_count: _key_count,
             bucket_id: bucket_id,
             bucket_offset: start_index,
         });

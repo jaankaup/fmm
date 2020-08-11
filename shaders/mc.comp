@@ -19,7 +19,7 @@ layout(set = 0, binding = 0) uniform McParams {
     float for_future_usage2;
 };
 
-// Atomic counter. This counter ensures triangles are stored uniquelly to unique location on mc_out buffer.
+// Atomic counter. This counter ensures triangles are stored sequently to unique locations on mc_out buffer.
 layout(set = 0, binding = 1) buffer McCounter {
     uint counter;
 };

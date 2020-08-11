@@ -103,7 +103,6 @@ impl Texture {
         // TODO: check the size of the image.
 
         let mut temp: Vec<u8> = Vec::new();
-        let mut counter = 0; 
 
         // The png has only rgb components. Add the alpha component to each texel. 
         if bits_per_pixel == 3 {

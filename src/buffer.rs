@@ -38,7 +38,7 @@ impl Buffer {
         }
     }
 
-    pub fn create_buffer(device: &wgpu::Device, capacity: u64, usage: wgpu::BufferUsage, label: Option<std::borrow::Cow<&str>>) -> Self {
+    pub fn create_buffer(device: &wgpu::Device, capacity: u64, usage: wgpu::BufferUsage, _label: Option<std::borrow::Cow<&str>>) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(Borrowed("blah")),
             size: capacity,

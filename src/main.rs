@@ -11,7 +11,7 @@ use fmm::misc::*;
 use fmm::buffer::*;
 use fmm::texture::*;
 use fmm::camera::*;
-use fmm::radix_sort::*;
+//use fmm::radix_sort::*;
 use fmm::marching_cubes::*;
 //use fmm::radix_sort::*;
 use fmm::app_resources::*;
@@ -29,7 +29,6 @@ enum Example {
     TwoTriangles,
     Cube,
     Mc,
-    Random,
     VolumetricNoise,
     Volumetric3dTexture,
     Hilbert2d,
@@ -44,18 +43,11 @@ struct Buffers {
     ray_march_output_buffer: BufferInfo,
     ray_debug_buffer: BufferInfo,
     sphere_tracer_output_buffer: BufferInfo,
-    random_triangle_buffer: BufferInfo,
     noise_3d_output_buffer: BufferInfo,
     bitonic: BufferInfo,
     hilbert_2d: BufferInfo,
-    radix_input: BufferInfo,
-    radix_auxiliary: BufferInfo,
-    radix_histogram: BufferInfo,
-    radix_keyblocks: BufferInfo,
 }
 
-static RANDOM_TRIANGLE_COUNT: u32 = 1000;
-  
 // Noise 3d resolution.
 static N_3D_RES: (u32, u32, u32) = (128,128,128);
 
@@ -75,14 +67,9 @@ static BUFFERS:  Buffers = Buffers {
     ray_march_output_buffer:     BufferInfo { name: "ray_march_output",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4),},
     ray_debug_buffer:            BufferInfo { name: "ray_debug_buffer",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4 * 4),},
     sphere_tracer_output_buffer: BufferInfo { name: "sphere_tracer_output",      size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 12 * 4),},
-    random_triangle_buffer:      BufferInfo { name: "random_triangle_buffer",    size: None,},
     noise_3d_output_buffer:      BufferInfo { name: "noise_3d_output_buffer",    size: Some(N_3D_RES.0 * N_3D_RES.1 * N_3D_RES.2 * 4),},
     bitonic:                     BufferInfo { name: "bitonic",                   size: Some(8192 * 4),},
     hilbert_2d:                  BufferInfo { name: "hilbert_2d",                size: None,},
-    radix_input:                 BufferInfo { name: "radix_input",               size: None,}, // TODO: to radix_sort.rs
-    radix_auxiliary:             BufferInfo { name: "radix_auxiliary",           size: None,}, // TODO: to radix_sort.rs
-    radix_histogram:             BufferInfo { name: "radix_histogram",           size: None,}, // TODO: to radix_sort.rs
-    radix_keyblocks:             BufferInfo { name: "radix_keyblocks",           size: None,}, // TODO: to radix_sort.rs
 };
 
 #[derive(Clone, Copy)]
@@ -318,7 +305,7 @@ fn create_two_triangles_info(sample_count: u32) -> RenderPipelineInfo {
     two_triangles_info
 }
 
-fn line_info(sample_count: u32) -> RenderPipelineInfo { 
+fn line_info(_sample_count: u32) -> RenderPipelineInfo { 
     let line_info: RenderPipelineInfo = RenderPipelineInfo {
         vertex_shader: ShaderModuleInfo {
             name: LINE_SHADERS[0].name,
@@ -748,122 +735,6 @@ fn sphere_tracer_info(sample_count: u32) -> ComputePipelineInfo {
     };
 
     sphere_tracer_info
-}
-
-// TODO: change project in a such way that this can be moved to radix_sort.rs.
-fn radix0() -> ComputePipelineInfo {
-   let radix0_info: ComputePipelineInfo = ComputePipelineInfo {
-       compute_shader: ShaderModuleInfo {
-           name: RADIX_SHADER.name,
-           source_file: RADIX_SHADER.source_file,
-           _stage: "compute"
-       }, 
-       bind_groups:
-           vec![ 
-               vec![
-                   BindGroupInfo {
-                            binding: 0,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_input.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 1,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_auxiliary.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 2,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_histogram.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 3,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_keyblocks.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-               ],
-           ],
-    };
-
-    radix0_info
-}
-
-// TODO: change project in a such way that this can be moved to radix_sort.rs.
-fn radix1() -> ComputePipelineInfo {
-   let radix1_info: ComputePipelineInfo = ComputePipelineInfo {
-       compute_shader: ShaderModuleInfo {
-           name: RADIX_SHADER.name,
-           source_file: RADIX_SHADER.source_file,
-           _stage: "compute"
-       }, 
-       bind_groups:
-           vec![ 
-               vec![
-                   BindGroupInfo {
-                            binding: 0,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_auxiliary.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 1,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_input.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 2,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_histogram.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-                   BindGroupInfo {
-                            binding: 3,
-                            visibility: wgpu::ShaderStage::COMPUTE,
-                            resource: Resource::Buffer(BUFFERS.radix_keyblocks.name),
-                            binding_type: wgpu::BindingType::StorageBuffer {
-                               dynamic: false,
-                               readonly: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-               ],
-           ],
-    };
-
-    radix1_info
 }
 
 fn bitonic_info() -> ComputePipelineInfo {
@@ -1402,18 +1273,6 @@ impl App {
                         &wgpu::PrimitiveTopology::TriangleList,
                         sample_count);
 
-
-        // TODO: move this somewhere else.
-        let random_triangles_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.random_triangle_buffer.name.to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: RANDOM_TRIANGLE_COUNT*3,
-            instances: 1,
-        };
-        
-        vertex_buffer_infos.insert("random_triangles_vb_info".to_string(), random_triangles_vb_info);
-
         let mc_renderer_pass = RenderPass {
             pipeline: mc_render_pipeline,
             bind_groups: mc_render_bind_groups,
@@ -1621,17 +1480,6 @@ impl App {
 
         println!("k[0] == {}", k[0]);
 
-        let blocks = create_key_blocks(0, 44000, 1); 
-        for i in 0..blocks.len() {
-            println!("{} :: KeyBlock {{key_offset: {}, key_count: {}, buffer_id: {}, buffer_offset: {}}}",
-                i,
-                blocks[i].key_offset,
-                blocks[i].key_count,
-                blocks[i].bucket_id,
-                blocks[i].bucket_offset
-            );
-        }
-
         Self {
             surface,
             device,
@@ -1805,12 +1653,6 @@ impl App {
                 },
                 Example::Mc => {
                     let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info") .unwrap();
-                    self.render_passes.get("mc_renderer_pass")
-                    .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
-                }
-                Example::Random => {
-                    let rp = self.vertex_buffer_infos.get("random_triangles_vb_info") .unwrap();
                     self.render_passes.get("mc_renderer_pass")
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
@@ -2023,70 +1865,6 @@ fn create_vertex_buffers(device: &wgpu::Device, buffers: &mut HashMap::<String, 
 
     println!(" ... OK'");
 
-    print!("    * Creating random triangles buffer as '{}'", BUFFERS.random_triangle_buffer.name);
-    let mut rng = thread_rng();
-    let mut random_triangles = Vec::new();
-    for _i in 0..RANDOM_TRIANGLE_COUNT {
-        let a1 = rng.gen(); 
-        let a2 = rng.gen(); 
-        let a3 = rng.gen(); 
-        let b1 = rng.gen(); 
-        let b2 = rng.gen(); 
-        let b3 = rng.gen(); 
-        let c1 = rng.gen(); 
-        let c2 = rng.gen(); 
-        let c3 = rng.gen(); 
-        let vert_a = cgmath::Vector3::new(a1,a2,a3);
-        let vert_b = cgmath::Vector3::new(b1,b2,b3);
-        let vert_c = cgmath::Vector3::new(c1,c2,c3);
-    
-        let u = vert_b - vert_c;
-        let v = vert_a - vert_c;
-
-        let normal = u.cross(v).normalize();
-
-        random_triangles.push(vert_a.x);
-        random_triangles.push(vert_a.y);
-        random_triangles.push(vert_a.z);
-        random_triangles.push(1.0);
-
-        random_triangles.push(normal.x);
-        random_triangles.push(normal.y);
-        random_triangles.push(normal.z);
-        random_triangles.push(0.0);
-
-        random_triangles.push(vert_b.x);
-        random_triangles.push(vert_b.y);
-        random_triangles.push(vert_b.z);
-        random_triangles.push(1.0);
-
-        random_triangles.push(normal.x);
-        random_triangles.push(normal.y);
-        random_triangles.push(normal.z);
-        random_triangles.push(0.0);
-
-        random_triangles.push(vert_c.x);
-        random_triangles.push(vert_c.y);
-        random_triangles.push(vert_c.z);
-        random_triangles.push(1.0);
-
-        random_triangles.push(normal.x);
-        random_triangles.push(normal.y);
-        random_triangles.push(normal.z);
-        random_triangles.push(0.0);
-    }
-
-    let random_triangles_buffer = Buffer::create_buffer_from_data::<f32>(
-        device,
-        &random_triangles,
-        wgpu::BufferUsage::VERTEX,
-        None
-    );
-
-    buffers.insert(BUFFERS.random_triangle_buffer.name.to_string(), random_triangles_buffer);
-
-    println!(" ... OK'");
-
     print!("    * Creating ray march output buffer as '{}'", BUFFERS.ray_march_output_buffer.name);
 
     let ray_march_output = Buffer::create_buffer_from_data::<u32>(
@@ -2143,6 +1921,7 @@ fn create_vertex_buffers(device: &wgpu::Device, buffers: &mut HashMap::<String, 
     // );
     //buffers.insert(BUFFERS.bitonic.name.to_string(), bitonic_buffer);
     //
+    let mut rng = thread_rng();
     let mut bitonic_rust = vec![4294967295 as u32 ; 8192];
     for i in 0..1300 {
         let random_number: u32 = rng.gen(); 
@@ -2294,7 +2073,7 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
     };
 
     #[cfg(not(target_arch = "wasm32"))]
-    let (mut pool, spawner) = {
+    let (mut pool, _spawner) = {
 
         let local_pool = futures::executor::LocalPool::new();
         let spawner = local_pool.spawner();
@@ -2378,11 +2157,6 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                             } => state.example = Example::Mc,
                             KeyboardInput {
                                 state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Key4),
-                                ..
-                            } => state.example = Example::Random,
-                            KeyboardInput {
-                                state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Key5),
                                 ..
                             } => state.example = Example::VolumetricNoise,
@@ -2420,7 +2194,7 @@ fn main() {
       
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut state = futures::executor::block_on(App::new(&window));
+        let state = futures::executor::block_on(App::new(&window));
         run(window, event_loop, state);
     }
 
