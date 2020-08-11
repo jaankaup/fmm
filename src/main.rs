@@ -15,6 +15,7 @@ use fmm::camera::*;
 use fmm::marching_cubes::*;
 //use fmm::radix_sort::*;
 use fmm::app_resources::*;
+use fmm::fast_marching::*;
 
 use winit::{
     event::{Event, WindowEvent,KeyboardInput,ElementState,VirtualKeyCode},
@@ -32,6 +33,7 @@ enum Example {
     VolumetricNoise,
     Volumetric3dTexture,
     Hilbert2d,
+    FmmGhostPoints,
 }
 
 struct Buffers {
@@ -44,8 +46,8 @@ struct Buffers {
     ray_debug_buffer: BufferInfo,
     sphere_tracer_output_buffer: BufferInfo,
     noise_3d_output_buffer: BufferInfo,
-    bitonic: BufferInfo,
     hilbert_2d: BufferInfo,
+    fmm_points: BufferInfo,
 }
 
 // Noise 3d resolution.
@@ -68,8 +70,8 @@ static BUFFERS:  Buffers = Buffers {
     ray_debug_buffer:            BufferInfo { name: "ray_debug_buffer",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4 * 4),},
     sphere_tracer_output_buffer: BufferInfo { name: "sphere_tracer_output",      size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 12 * 4),},
     noise_3d_output_buffer:      BufferInfo { name: "noise_3d_output_buffer",    size: Some(N_3D_RES.0 * N_3D_RES.1 * N_3D_RES.2 * 4),},
-    bitonic:                     BufferInfo { name: "bitonic",                   size: Some(8192 * 4),},
     hilbert_2d:                  BufferInfo { name: "hilbert_2d",                size: None,},
+    fmm_points:                  BufferInfo { name: "fmm_points",                size: None,}, // TODO: to radix_sort.rs
 };
 
 #[derive(Clone, Copy)]
@@ -737,33 +739,6 @@ fn sphere_tracer_info(sample_count: u32) -> ComputePipelineInfo {
     sphere_tracer_info
 }
 
-fn bitonic_info() -> ComputePipelineInfo {
-   let bitonic_info: ComputePipelineInfo = ComputePipelineInfo {
-       compute_shader: ShaderModuleInfo {
-           name: BITONIC_SHADER.name,
-           source_file: BITONIC_SHADER.source_file,
-           _stage: "compute"
-       }, 
-       bind_groups:
-           vec![ 
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::Buffer(BUFFERS.bitonic.name),
-                        binding_type: wgpu::BindingType::StorageBuffer {
-                           dynamic: false,
-                           readonly: false,
-                           min_binding_size: wgpu::BufferSize::new(BUFFERS.bitonic.size.unwrap() as u64 / 4),
-                        },
-                   },
-               ],
-           ],
-    };
-
-    bitonic_info
-}
-
 fn generate_noise3d_info() -> ComputePipelineInfo {
    let generate_noise3d_info: ComputePipelineInfo = ComputePipelineInfo {
        compute_shader: ShaderModuleInfo {
@@ -1193,6 +1168,57 @@ impl App {
 
         println!("");
 
+        /* POINT () */
+
+        println!("\nCreating ghostpoint pipeline and bind groups.\n");
+        let point_info = line_info(sample_count);
+        let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &point_info,
+                        &wgpu::PrimitiveTopology::PointList,
+                        sample_count);
+
+        let point_render_pass = RenderPass {
+            pipeline: point_pipeline,
+            bind_groups: point_groups,
+        };
+
+        render_passes.insert("point_render_pass".to_string(), point_render_pass);
+
+        let mut domain = DomainE::new(20,20,20);
+        //domain.initialize_boundary(|x, y, z| x.powf(0.3) + y.powf(0.3) + z.powf(0.3) - 5.0); 
+        domain.initialize_boundary(|x, y, z| y - 3.5); 
+        let fmm_ghost_data = domain.ghost_points_to_vec();
+
+//        let initial_values: Vec<cgmath::Vector3<f32>> = Vec::new();
+//        fmm::initialize_interface(&mut domain, &initial_values);
+
+        let fmm_ghost_points = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &fmm_ghost_data,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+        buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_ghost_points);
+
+        let ghost_point_size = (domain.dim_x + 1) * (domain.dim_x + 1) * (domain.dim_x + 1);
+
+        let fmm_ghost_vb_info = VertexBufferInfo {
+            vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: ghost_point_size,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("fmm_ghost_vb_info".to_string(), fmm_ghost_vb_info);
+
+        println!("");
+
         /* LINE (hilbert2d) */
 
         println!("\nCreating line pipeline and bind groups.\n");
@@ -1342,42 +1368,6 @@ impl App {
 
         compute_passes.insert("volume_3d_pass".to_string(), volume_3d_pass);
         println!("");
-
-        println!("\nCreating bitonic pipeline and bind groups.\n");
-        let bitonic_info = bitonic_info();
-        let (bitonic_bind_groups, bitonic_pipeline) = create_compute_pipeline_and_bind_groups(
-                        &device,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &bitonic_info);
-
-        let bitonic_pass = ComputePass {
-            pipeline: bitonic_pipeline,
-            bind_groups: bitonic_bind_groups,
-            dispatch_x: 1,
-            dispatch_y: 1,
-            dispatch_z: 1,
-        };
-
-        compute_passes.insert("bitonic_pass".to_string(), bitonic_pass);
-        println!("");
-
-        println!("\nLaunching bitonic.\n");
-
-        let mut bitonic_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        compute_passes.get("bitonic_pass")
-                      .unwrap()
-                      .execute(&mut bitonic_encoder);
-
-        queue.submit(Some(bitonic_encoder.finish()));
-
-        // let bitonic_output = &buffers.get(BUFFERS.bitonic.name).unwrap().to_vec::<u32>(&device, &queue).await;
-
-        // for i in 0..8192 {
-        //     println!("{}", bitonic_output[i]);
-        // }
 
         println!("\nCreating generate 3d noise pipeline and bind groups.\n");
         let noise3d_info = generate_noise3d_info();
@@ -1657,6 +1647,12 @@ impl App {
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
                 }
+                Example::FmmGhostPoints => {
+                    let rp = self.vertex_buffer_infos.get("fmm_ghost_vb_info") .unwrap();
+                    self.render_passes.get("point_render_pass")
+                    .unwrap()
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
+                },
                 Example::VolumetricNoise => {
                     let rp = self.vertex_buffer_infos.get("two_triangles_vb_info") .unwrap();
                     self.render_passes.get("ray_renderer_pass")
@@ -1912,38 +1908,6 @@ fn create_vertex_buffers(device: &wgpu::Device, buffers: &mut HashMap::<String, 
     buffers.insert(BUFFERS.noise_3d_output_buffer.name.to_string(), noise_output_buffer);
     println!(" ... OK'");
 
-    print!("    * Creating bitonic buffer as '{}'", BUFFERS.bitonic.name);
-    // let bitonic_buffer = Buffer::create_buffer(
-    //     device,
-    //     BUFFERS.bitonic.size.unwrap().into(),
-    //     wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-    //     None
-    // );
-    //buffers.insert(BUFFERS.bitonic.name.to_string(), bitonic_buffer);
-    //
-    let mut rng = thread_rng();
-    let mut bitonic_rust = vec![4294967295 as u32 ; 8192];
-    for i in 0..1300 {
-        let random_number: u32 = rng.gen(); 
-        bitonic_rust[i] = random_number;
-    }
-
-//    println!("Rust sort");
-//    for i in 0..8192 {
-//        println!("{} :: {}",i, bitonic_rust[i]);
-//    }
-
-    let bitonic_buffer = Buffer::create_buffer_from_data::<u32>(
-        device,
-        &bitonic_rust,
-        wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-        None
-    );
-    buffers.insert(BUFFERS.bitonic.name.to_string(), bitonic_buffer);
-    println!(" ... OK'");
-
-    bitonic_rust.sort();
-
     let mut hilbert: Vec<f32> = Vec::new(); //vec![0 as u32 ; 64*2];
     //let mut previous: [u32 ; 2] = [0,0];
     for i in 0..(8*8*8) {
@@ -2155,6 +2119,11 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 virtual_keycode: Some(VirtualKeyCode::Key3),
                                 ..
                             } => state.example = Example::Mc,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Key4),
+                                ..
+                            } => state.example = Example::FmmGhostPoints,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Key5),

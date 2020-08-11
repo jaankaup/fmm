@@ -66,5 +66,4 @@ pub fn create_textures(device: &wgpu::Device, queue: &wgpu::Queue, sc_desc: &wgp
     );
     textures.insert(TEXTURES.noise3d.name.to_string(), noise3dtexture);
     println!(" ... OK'");
-
 }
