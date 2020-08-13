@@ -5,9 +5,27 @@ use cgmath::{Vector3, Vector4};
 #[derive(Clone, Copy)]
 pub enum Cell {
     Known(f32),
-    Band(Option<f32>),
+    Band(f32),
     Far(),
 }
+
+//#[derive(Clone, Copy)]
+//pub struct Cell {
+//    cell_type: Cell_Type,
+//    coord: Vector3<u32>,
+//}
+//
+//impl Cell {
+//    pub fn new(x: u32, y: u32, z: u32, t: Cell_Type) -> Self {
+//        let cell_type = t;
+//        let coord = Vector3::<u32>::new(x, y, z);  
+//
+//        Self {
+//            cell_type: cell_type,
+//            coord: coord,
+//        }
+//    }
+//}
 
 //  
 //   Initial state
@@ -58,10 +76,15 @@ pub struct InterfaceT {
     pub points: Vec<f32>,
 }
 
+// Computational domanin for fast marching. Includes both cells and ghost points. 
 pub struct DomainE {
-    pub dim_x: u32,
-    pub dim_y: u32,
-    pub dim_z: u32,
+    pub min_x: u32, // Minimum x-coordinate for cells. 
+    pub max_x: u32, // Minimum y-coordinate for cells. 
+    pub min_y: u32, // Minimum z-coordinate for cells. 
+    pub max_y: u32, // Maximum x-coordinate for cells. 
+    pub min_z: u32, // Maximum y-coordinate for cells. 
+    pub max_z: u32, // Maximum z-coordinate for cells. 
+    pub scale_factor: f32,
     pub cells: Vec<Cell>,
     pub ghost_points: InterfaceT,
     pub min_ghost_value: f32, // for debuging. Keep track of the minimun value of b(x).
@@ -69,17 +92,35 @@ pub struct DomainE {
 }
 
 impl DomainE {
-    pub fn new(width: u32, height: u32, depth: u32) -> Self {
+    pub fn new(min_x: u32, max_x: u32, min_y: u32, max_y: u32, min_z: u32, max_z: u32, scale_factor: f32) -> Self {
 
-        assert!(width != 0 || height != 0 || depth != 0, "width, height and depth must be > 0");
+        assert!(min_x < max_x, "min_x :: {} < max_x :: {}", min_x, max_x);
+        assert!(min_y < max_y, "min_y :: {} < max_y :: {}", min_y, max_y);
+        assert!(min_z < max_z, "min_z :: {} < max_z :: {}", min_z, max_x);
 
-        let cells: Vec<Cell> = vec![Cell::Far() ; (width * height * depth) as usize];
-        let ghost_points: Vec<f32> = vec![0.0 ; ((width+1) * (height+1) * (depth+1)) as usize];
+        // Delta for x positions.
+        let delta_x = max_x - min_x;
+
+        // Delta for y positions.
+        let delta_y = max_y - min_y;
+
+        // Delta for z positions.
+        let delta_z = max_z - min_z;
+
+        // Initialize cell points with far values.
+        let cells: Vec<Cell> = vec![Cell::Far() ; ((delta_x+1) * (delta_y+1) * (delta_z+1)) as usize];
+
+        // Initialize ghost points with zeroes.
+        let ghost_points: Vec<f32> = vec![0.0 ; ((delta_x+2) * (delta_y+2) * (delta_z+2)) as usize];
 
         Self {
-            dim_x: width,
-            dim_y: height,
-            dim_z: depth,
+            min_x: min_x,
+            max_x: max_x,
+            min_y: min_y,
+            max_y: max_y,
+            min_z: min_z,
+            max_z: max_z,
+            scale_factor: scale_factor,
             cells: cells,
             ghost_points: InterfaceT { points: ghost_points, },
             min_ghost_value: 0.0,
@@ -87,54 +128,131 @@ impl DomainE {
         }
     }
 
-    pub fn ghost_points_to_vec(&self) -> Vec<f32> {
+    // Create Vec<f32> from cell values in vvvv cccc format. vvvv :: pos, cccc :: color.
+    // Far cell point = red.  
+    // Known cell point = greeb.  
+    // Band cell point = blud.  
+    pub fn cells_to_vec(&self) -> Vec<f32> {
+        println!("Converting cell points to vec<f32>.");
 
-        let boundary_width = self.dim_x + 1;
-        let boundary_height = self.dim_y + 1;
-        let boundary_depth = self.dim_z + 1;
+        let boundary_width = self.max_x - self.min_x + 1;
+        let boundary_height = self.max_y - self.min_y + 1;
+        let boundary_depth = self.max_z - self.min_z + 1;
 
         let mut result: Vec<f32> = Vec::new(); 
-        //let mut result: Vec<f32> = Vec::with_capacity((boundary_width * boundary_height * boundary_depth * 4) as usize); 
-        let ratio = (self.max_ghost_value - self.min_ghost_value).abs();
-        println!("ratio == {}", ratio);
-        let mut counter = 0;
 
-        for k in 0..boundary_width  {
+        for k in 0..boundary_depth  {
         for j in 0..boundary_height {
-        for i in 0..boundary_depth  {
+        for i in 0..boundary_width  {
+            let index = (i + j * boundary_width + k * boundary_width * boundary_height) as usize;
+            let value = self.cells[index];
 
+            result.push((self.min_x + i) as f32 * self.scale_factor);
+            result.push((self.min_y + j) as f32 * self.scale_factor);
+            result.push((self.min_z as i32 - k as i32) as f32 * self.scale_factor);
+            result.push((1.0) as f32);
+            println!("cell_point ({}, {}, {}, {})",
+                (self.min_x + i) as f32,
+                (self.min_y + j) as f32,
+                (self.min_z as i32 - k as i32) as f32,
+                1.0);
+            
+            result.push(match value {Cell::Far()   => 1.0, _ => 0.0 }); // red
+            result.push(match value {Cell::Known(_) => 1.0, _ => 0.0 }); // green
+            result.push(match value {Cell::Band(_)  => 1.0, _ => 0.0 }); // blue
+            result.push(1.0 as f32); // alpha
+        }}};
+        result
+    }
+
+    // Create Vec<f32> from cell values in vvvc format. vvv: pos, c :: [0.0, 1.0] a scaled/normalized ghost point value.
+    pub fn ghost_points_to_vec(&self) -> Vec<f32> {
+        println!("Converting ghost points to vec<f32>.");
+
+        let boundary_width = self.max_x - self.min_x + 2;
+        let boundary_height = self.max_y - self.min_y + 2;
+        let boundary_depth = self.max_z - self.min_z + 2;
+
+        let mut result: Vec<f32> = Vec::new(); 
+
+        for k in 0..boundary_depth  {
+        for j in 0..boundary_height {
+        for i in 0..boundary_width  {
             let index = (i + j * boundary_width + k * boundary_width * boundary_height) as usize;
             let value = self.ghost_points.points[index];
-            //let mut normalized_value: f32 = 0.0; 
-            //if ratio > 0.0 {
-            //    normalized_value = (value + self.min_ghost_value.abs()) / ratio;     
-            //}
-            let maximum_value = if self.max_ghost_value < self.min_ghost_value.abs() { self.min_ghost_value.abs() } else { self.max_ghost_value };
-            let normalized_value = clamp(1.0 / (value.abs() + 1.0) , 0.0, 1.0).powf(2.0);
+
+            let normalized_value = clamp(1.0 / (value.abs() + 1.0), 0.1, 1.0).powf(8.0);
             let vec = Vector4::<f32> {
-                x: i as f32 + 0.5,
-                y: j as f32 + 0.5,
-                z: k as f32 + 0.5,
+                x: (self.min_x + i) as f32 - 0.5,
+                y: (self.min_y + j) as f32 - 0.5,
+                z: (self.min_z as i32 - k as i32) as f32 + 0.5,
                 w: normalized_value as f32
             };    
             println!("ghost_point ({}, {}, {}, {})", vec.x, vec.y, vec.z, vec.w);
-            result.push(i as f32 + 0.5);
-            result.push(j as f32 + 0.5);
-            result.push(k as f32 + 0.5);
+            result.push(((self.min_x + i) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_y + j) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z as i32 - k as i32) as f32 + 0.5) * self.scale_factor);
             result.push(normalized_value);
-            counter = counter + 1;
-            //result.push(vec);
         }}};
-        //println!("min/max ({}, {})", self.min_ghost_value, self.max_ghost_value);
-        //println!("counter == {}", counter);
+        result
+    }
+
+    pub fn ghost_grid_to_vec(&self) -> Vec<f32> {
+
+        println!("Converting ghost grid lines to vec<f32>.");
+        let boundary_width = self.max_x - self.min_x + 2;
+        let boundary_height = self.max_y - self.min_y + 2;
+        let boundary_depth = self.max_z - self.min_z + 2;
+
+        let mut result: Vec<f32> = Vec::new(); 
+
+        // Horizontal lines.
+        for k in 0..boundary_depth  {
+        for j in 0..boundary_height {
+            result.push(((self.min_x) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_y + j) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z as i32 - k as i32) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+            result.push(((self.max_x + 1) as f32- 0.5) * self.scale_factor);
+            result.push(((self.min_y + j) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z as i32 - k as i32) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+        }};
+
+        // Vertical lines.
+        for k in 0..boundary_depth  {
+        for i in 0..boundary_width {
+            result.push(((self.min_x + i) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_y) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z as i32 - k as i32) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+            result.push(((self.min_x + i) as f32- 0.5) * self.scale_factor);
+            result.push(((self.max_y + 1) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z as i32 - k as i32) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+        }};
+
+        // Depth lines.
+        for j in 0..boundary_height  {
+        for i in 0..boundary_width {
+            result.push(((self.min_x + i) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_y + j) as f32 - 0.5) * self.scale_factor);
+            result.push(((self.min_z) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+            result.push(((self.min_x + i) as f32- 0.5) * self.scale_factor);
+            result.push(((self.min_y + j) as f32 - 0.5) * self.scale_factor);
+            result.push(((-(self.max_z as i32) + 1 as i32) as f32 + 0.5) * self.scale_factor);
+            result.push(0.1);
+        }};
+
         result
     }
 
     pub fn initialize_boundary<F: Fn(f32, f32, f32) -> f32>(&mut self, b: F) {
 
-        let boundary_width = self.dim_x + 1;
-        let boundary_height = self.dim_y + 1;
-        let boundary_depth = self.dim_z + 1;
+        let boundary_width = self.max_x - self.min_x + 2;
+        let boundary_height = self.max_y - self.min_y + 2;
+        let boundary_depth = self.max_z - self.min_z + 2;
         let mut min_value: f32 = 0.0;
         let mut max_value: f32 = 0.0;
 
@@ -143,7 +261,10 @@ impl DomainE {
         for i in 0..boundary_depth  {
 
             let index = (i + j * boundary_width + k * boundary_width * boundary_height) as usize;
-            let value = b(i as f32 + 0.5, j as f32 + 0.5, k as f32 + 0.5); 
+            let value = b(
+               ((self.min_x + i) as f32 - 0.5) * self.scale_factor,
+               ((self.min_y + j) as f32 - 0.5) * self.scale_factor,
+               ((self.min_z + k) as f32 - 0.5) * self.scale_factor); 
             if value < min_value { min_value = value; }
             if value > max_value { max_value = value; }
             self.ghost_points.points[index] = value; 
@@ -171,15 +292,15 @@ pub fn initialize_ghost_points<F: FnOnce(f32, f32, f32) -> f32>(domain: &mut Dom
 
 // Insert a value explicitly.
 fn add_initial_value(domain: DomainE, position: Vector3<u32>, value: Vector3<f32>) {
-    assert!(position.x == 0 || position.y == 0 || position.z == 0 || position.x > domain.dim_x || position.y > domain.dim_y || position.z > domain.dim_z,
-        "Position ({}, {}, {}) not in domain range (0, 0, 0) .. ({}, {}, {}).",
-        position.x,
-        position.y,
-        position.z,
-        domain.dim_x,
-        domain.dim_y,
-        domain.dim_z
-    );
+    // assert!(position.x == 0 || position.y == 0 || position.z == 0 || position.x > domain.dim_x || position.y > domain.dim_y || position.z > domain.dim_z,
+    //     "Position ({}, {}, {}) not in domain range (0, 0, 0) .. ({}, {}, {}).",
+    //     position.x,
+    //     position.y,
+    //     position.z,
+    //     domain.dim_x,
+    //     domain.dim_y,
+    //     domain.dim_z
+    // );
 }
 
 pub fn is_inside_range(value: f32, min: f32, max: f32) -> bool {
@@ -191,6 +312,11 @@ pub fn clamp(value: f32, a: f32, b: f32) -> f32 {
     let min = if value < a { a } else { value }; 
     let result = if min > b { b } else { min }; 
     result
+}
+
+fn dx_minus(x: u32, y: u32, z: u32, domain: &DomainE) -> f32 {
+    //assert!(x == 0 || y > domain.dim_y || z == 0 || position.x > domain.dim_x || position.y > domain.dim_y || position.z > domain.dim_z,
+    123.0
 }
 //pub fn initialize_interface(domain: &mut DomainE, initial_values: &Vec<Vector3<f32>>) {
 //

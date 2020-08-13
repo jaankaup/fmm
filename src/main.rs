@@ -34,6 +34,13 @@ enum Example {
     Volumetric3dTexture,
     Hilbert2d,
     FmmGhostPoints,
+    CellPoints,
+}
+
+struct Fmm {
+    ghost_points: bool,
+    grids: bool,
+    cells: bool,
 }
 
 struct Buffers {
@@ -48,6 +55,8 @@ struct Buffers {
     noise_3d_output_buffer: BufferInfo,
     hilbert_2d: BufferInfo,
     fmm_points: BufferInfo,
+    fmm_cell_points: BufferInfo,
+    fmm_ghost_lines: BufferInfo,
 }
 
 // Noise 3d resolution.
@@ -71,7 +80,9 @@ static BUFFERS:  Buffers = Buffers {
     sphere_tracer_output_buffer: BufferInfo { name: "sphere_tracer_output",      size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 12 * 4),},
     noise_3d_output_buffer:      BufferInfo { name: "noise_3d_output_buffer",    size: Some(N_3D_RES.0 * N_3D_RES.1 * N_3D_RES.2 * 4),},
     hilbert_2d:                  BufferInfo { name: "hilbert_2d",                size: None,},
-    fmm_points:                  BufferInfo { name: "fmm_points",                size: None,}, // TODO: to radix_sort.rs
+    fmm_points:                  BufferInfo { name: "fmm_points",                size: None,},
+    fmm_cell_points:             BufferInfo { name: "fmm_cell_points",           size: None,},
+    fmm_ghost_lines:             BufferInfo { name: "fmm_ghost_lines",           size: None,},
 };
 
 #[derive(Clone, Copy)]
@@ -116,7 +127,8 @@ impl RenderPass {
                textures: &HashMap<String, Texture>,
                buffers: &HashMap<String, Buffer>,
                vertex_buffer_info: &VertexBufferInfo,
-               sample_count: u32) {
+               sample_count: u32,
+               clear: bool) {
 
             let multi_sampled = multisampled(sample_count);
 
@@ -126,12 +138,19 @@ impl RenderPass {
                             attachment: match multi_sampled { false => &frame.view, true => &multisampled_framebuffer, },
                             resolve_target: match multi_sampled { false => None, true => Some(&frame.view), },
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color { 
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
+                                load: match clear {
+                                    true => {
+                                        wgpu::LoadOp::Clear(wgpu::Color { 
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 1.0,
+                                        })
+                                    }
+                                    false => {
+                                        wgpu::LoadOp::Load
+                                    }
+                                },
                                 store: true,
                             },
                     }
@@ -140,9 +159,9 @@ impl RenderPass {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: &textures.get(TEXTURES.depth.name).unwrap().view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0), 
-                        store: true,
-                        }),
+                            load: match clear { true => wgpu::LoadOp::Clear(1.0), false => wgpu::LoadOp::Load }, 
+                            store: true,
+                    }),
                     stencil_ops: None,
                     }),
             });
@@ -222,6 +241,16 @@ static MC_RENDER_SHADERS: [ShaderModuleInfo; 2]  = [
 static LINE_SHADERS: [ShaderModuleInfo; 2]  = [
     ShaderModuleInfo {name: "line_vert", source_file: "line_vert.spv", _stage: "vertex"},
     ShaderModuleInfo {name: "line_frag", source_file: "line_frag.spv", _stage: "frag"},
+];
+
+static LINE_SHADERS_4PX: [ShaderModuleInfo; 2]  = [
+    ShaderModuleInfo {name: "line_vert_4px", source_file: "line_vert_4px.spv", _stage: "vertex"},
+    ShaderModuleInfo {name: "line_frag_4px", source_file: "line_frag_4px.spv", _stage: "frag"},
+];
+
+static LINE_SHADERS_VN: [ShaderModuleInfo; 2]  = [
+    ShaderModuleInfo {name: "line_vert_vn", source_file: "line_vn.vert.spv", _stage: "vertex"},
+    ShaderModuleInfo {name: "line_frag_vn", source_file: "line_vn.frag.spv", _stage: "frag"},
 ];
 
 static MARCHING_CUBES_SHADER: ShaderModuleInfo  = ShaderModuleInfo { 
@@ -338,6 +367,73 @@ fn line_info(_sample_count: u32) -> RenderPipelineInfo {
     };
 
     line_info
+}
+
+fn line_info_4px(_sample_count: u32) -> RenderPipelineInfo {
+    let line_4px_info: RenderPipelineInfo = RenderPipelineInfo {
+        vertex_shader: ShaderModuleInfo {
+            name: LINE_SHADERS_4PX[0].name,
+            source_file: LINE_SHADERS_4PX[0].source_file,
+            _stage: "vertex"
+        }, 
+        fragment_shader: Some(ShaderModuleInfo {
+            name: LINE_SHADERS_4PX[1].name,
+            source_file: LINE_SHADERS_4PX[1].source_file,
+            _stage: "frag"
+        }), 
+        bind_groups: vec![
+               vec![
+                   BindGroupInfo {
+                            binding: 0,
+                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                            resource: Resource::Buffer(BUFFERS.camera_uniform_buffer.name),
+                            binding_type: wgpu::BindingType::UniformBuffer {
+                               dynamic: false,
+                               min_binding_size: None,
+                            },
+                   }, 
+               ],
+        ],
+        input_formats: vec![
+            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
+        ],
+    };
+
+    line_4px_info
+}
+
+fn line_vn_info(_sample_count: u32) -> RenderPipelineInfo { 
+    let line_info_vn: RenderPipelineInfo = RenderPipelineInfo {
+        vertex_shader: ShaderModuleInfo {
+            name: LINE_SHADERS_VN[0].name,
+            source_file: LINE_SHADERS_VN[0].source_file,
+            _stage: "vertex"
+        }, 
+        fragment_shader: Some(ShaderModuleInfo {
+            name: LINE_SHADERS_VN[1].name,
+            source_file: LINE_SHADERS_VN[1].source_file,
+            _stage: "frag"
+        }), 
+        bind_groups: vec![
+               vec![
+                   BindGroupInfo {
+                            binding: 0,
+                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                            resource: Resource::Buffer(BUFFERS.camera_uniform_buffer.name),
+                            binding_type: wgpu::BindingType::UniformBuffer {
+                               dynamic: false,
+                               min_binding_size: None,
+                            },
+                   }, 
+               ],
+        ],
+        input_formats: vec![
+            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
+            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64)
+        ],
+    };
+
+    line_info_vn
 }
 
 fn vtn_renderer_info(sample_count: u32) -> RenderPipelineInfo { 
@@ -1005,6 +1101,7 @@ pub struct App {
     render_passes: HashMap<String, RenderPass>,
     compute_passes: HashMap<String, ComputePass>,
     vertex_buffer_infos: HashMap<String, VertexBufferInfo>,
+    fmm_debug_state: Fmm,
 //    pool: ,
 //    spawner: ,
 }
@@ -1026,6 +1123,12 @@ impl App {
         let sample_count = 1;
                                                                                   
         let example = Example::TwoTriangles;
+
+        let fmm_debug_state =  Fmm {
+            ghost_points: true,
+            grids: true,
+            cells: true,
+        };
 
         // Create the surface, adapter, device and the queue.
         let (surface, device, queue, size) = create_sdqs(window).await;
@@ -1104,6 +1207,26 @@ impl App {
         let mut compute_passes: HashMap<String, ComputePass> = HashMap::new();
         let mut vertex_buffer_infos: HashMap<String, VertexBufferInfo> = HashMap::new();
 
+        /* DUMMY VB INFO AND BUFFER*/
+
+        let dummy_buffer = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &[],
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+        buffers.insert("dummy_buffer".to_string(), dummy_buffer);
+
+        let dummy_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "dummy_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: 0,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("dummy_vb_info".to_string(), dummy_vb_info);
+
         /* TWO TRIANGLES */
 
         println!("Creating two_triangles pipeline and bind groups.\n");
@@ -1170,8 +1293,9 @@ impl App {
 
         /* POINT () */
 
+
         println!("\nCreating ghostpoint pipeline and bind groups.\n");
-        let point_info = line_info(sample_count);
+        let point_info = line_info_4px(sample_count);
         let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
                         &device,
                         &sc_desc,
@@ -1189,13 +1313,39 @@ impl App {
 
         render_passes.insert("point_render_pass".to_string(), point_render_pass);
 
-        let mut domain = DomainE::new(20,20,20);
-        //domain.initialize_boundary(|x, y, z| x.powf(0.3) + y.powf(0.3) + z.powf(0.3) - 5.0); 
-        domain.initialize_boundary(|x, y, z| y - 3.5); 
-        let fmm_ghost_data = domain.ghost_points_to_vec();
+        println!("\nCreating cellpoint pipeline and bind groups.\n");
+        let cell_point_info = line_vn_info(sample_count);
+        let (cell_point_groups, cell_point_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &cell_point_info,
+                        &wgpu::PrimitiveTopology::PointList,
+                        sample_count);
 
-//        let initial_values: Vec<cgmath::Vector3<f32>> = Vec::new();
-//        fmm::initialize_interface(&mut domain, &initial_values);
+        let cell_point_render_pass = RenderPass {
+            pipeline: cell_point_pipeline,
+            bind_groups: cell_point_groups,
+        };
+
+        render_passes.insert("cell_point_render_pass".to_string(), cell_point_render_pass);
+
+        let mut domain = DomainE::new(1,20,1,20,1,20, 0.1);
+        domain.initialize_boundary(|x, y, z| (x - 1.0).powf(2.0) + (y-1.0).powf(2.0) + (z-1.0).powf(2.0) - 0.1); 
+        //domain.initialize_boundary(|x, y, z| z + 0.5); //
+        let fmm_ghost_data = domain.ghost_points_to_vec();
+        let fmm_cell_data = domain.cells_to_vec();
+        let ghost_lines = domain.ghost_grid_to_vec();
+
+        let ghost_lines_buffer = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &ghost_lines,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+        buffers.insert(BUFFERS.fmm_ghost_lines.name.to_string(), ghost_lines_buffer);
 
         let fmm_ghost_points = Buffer::create_buffer_from_data::<f32>(
             &device,
@@ -1205,7 +1355,16 @@ impl App {
         );
         buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_ghost_points);
 
-        let ghost_point_size = (domain.dim_x + 1) * (domain.dim_x + 1) * (domain.dim_x + 1);
+        let fmm_cell_points = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &fmm_cell_data,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+        buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
+
+        let ghost_point_size = domain.ghost_points.points.len() as u32;
+        println!("GHOST SIZE == {}", ghost_point_size);
 
         let fmm_ghost_vb_info = VertexBufferInfo {
             vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
@@ -1216,6 +1375,48 @@ impl App {
         };
 
         vertex_buffer_infos.insert("fmm_ghost_vb_info".to_string(), fmm_ghost_vb_info);
+
+        let cell_point_size = domain.cells.len() as u32;
+        println!("CELL POINTS SIZE == {}", cell_point_size);
+
+        let fmm_cell_vb_info = VertexBufferInfo {
+            vertex_buffer_name: BUFFERS.fmm_cell_points.name.to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: cell_point_size,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("fmm_cell_vb_info".to_string(), fmm_cell_vb_info);
+
+        println!("\nCreating ghost lines pipeline and bind groups.\n");
+        let ghost_line_info = line_info(sample_count);
+        let (ghost_line_groups, ghost_line_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &ghost_line_info,
+                        &wgpu::PrimitiveTopology::LineList,
+                        sample_count);
+
+        let ghost_line_vb_info = VertexBufferInfo {
+            vertex_buffer_name: BUFFERS.fmm_ghost_lines.name.to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: ghost_lines.len() as u32 / 4,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("ghost_line_vb_info".to_string(), ghost_line_vb_info);
+
+        let ghost_line_render_pass = RenderPass {
+            pipeline: ghost_line_pipeline,
+            bind_groups: ghost_line_groups,
+        };
+
+        render_passes.insert("ghost_line_render_pass".to_string(), ghost_line_render_pass);
 
         println!("");
 
@@ -1424,27 +1625,6 @@ impl App {
 
         queue.submit(Some(noise_encoder.finish()));
 
-//        let noise_output = &textures.get(TEXTURES.noise3d.name).unwrap().to_vec::<u8>(&device, &queue).await;
-//        for i in 0..1024 {
-//            println!("{}", noise_output[i]);
-//        }
-//        let mut noise_counter = 0;
-//        for i in 0..131072*4 {
-//            if noise_counter == 0 {
-//                print!("{} :: (", i/4);
-//            }
-//            print!(" {} ",noise_output[i]);
-//            if noise_counter == 3 {
-//                println!(")");
-//                noise_counter = 0;
-//                continue;
-//            }
-//            noise_counter = noise_counter + 1;
-            //println!("{} :: origin: ({}, {}, {}, {})", i, sphere_output[offset], sphere_output[offset+1], sphere_output[offset+2], sphere_output[offset+3]);
-            //println!("      intersection_point: ({}, {}, {}, {})", sphere_output[offset+4], sphere_output[offset+5], sphere_output[offset+6], sphere_output[offset+7]);
-            //println!("      normal: ({}, {}, {}, {})", sphere_output[offset+8], sphere_output[offset+9], sphere_output[offset+10], sphere_output[offset+11]);
-//        }
-
         println!("");
 
         println!("\nLaunching marching cubes.\n");
@@ -1493,6 +1673,7 @@ impl App {
             render_passes,
             compute_passes,
             vertex_buffer_infos,
+            fmm_debug_state,
         }
     } // new(...
 
@@ -1556,6 +1737,7 @@ impl App {
             window.set_title(&fps_text);
         }
 
+        //let frame = match self.swap_chain.get_current_frame() {
         let frame = match self.swap_chain.get_current_frame() {
             Ok(frame) => { frame.output },    
             Err(_) => {
@@ -1633,44 +1815,80 @@ impl App {
                     let vb_info = self.vertex_buffer_infos.get("two_triangles_vb_info").expect("Could not find vertex buffer info");
                     self.render_passes.get("two_triangles_render_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &vb_info, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &vb_info, self.sample_count, true);
                 },
                 Example::Cube => {
                     let vb_info = self.vertex_buffer_infos.get("vtn_vb_info").expect("Could not find vertex buffer info");
                     self.render_passes.get("vtn_render_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &vb_info, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &vb_info, self.sample_count, true);
                 },
                 Example::Mc => {
-                    let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info") .unwrap();
+                    let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info").unwrap();
                     self.render_passes.get("mc_renderer_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                 }
                 Example::FmmGhostPoints => {
-                    let rp = self.vertex_buffer_infos.get("fmm_ghost_vb_info") .unwrap();
-                    self.render_passes.get("point_render_pass")
+
+                    let mut clear = true;
+                    
+                    if self.fmm_debug_state.ghost_points == true {
+                        let rp = self.vertex_buffer_infos.get("fmm_ghost_vb_info").unwrap();
+                        self.render_passes.get("point_render_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, clear);
+                        clear = false;
+                    }
+
+                    if self.fmm_debug_state.cells == true {
+                        let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info") .unwrap();
+                        self.render_passes.get("cell_point_render_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_cell, self.sample_count, clear);
+                        clear = false;
+                    }
+
+                    if self.fmm_debug_state.grids == true {
+                        let rp_ghost_lines = self.vertex_buffer_infos.get("ghost_line_vb_info") .unwrap();
+                        self.render_passes.get("ghost_line_render_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_ghost_lines, self.sample_count, clear);
+                        clear = false;
+                    }
+
+                    // All above all disabled. We must draw something or application will crash.
+                    // TODO: create some dummy draw prosedure. 
+                    if clear == true {
+                        let dummy = self.vertex_buffer_infos.get("dummy_vb_info") .unwrap();
+                        self.render_passes.get("ghost_line_render_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &dummy, self.sample_count, clear);
+                    }
+                },
+                Example::CellPoints => {
+                    let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info") .unwrap();
+                    self.render_passes.get("cell_point_render_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_cell, self.sample_count, true);
                 },
                 Example::VolumetricNoise => {
                     let rp = self.vertex_buffer_infos.get("two_triangles_vb_info") .unwrap();
                     self.render_passes.get("ray_renderer_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
-
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                 },
                 Example::Volumetric3dTexture => {
-                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info") .unwrap();
+                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info").unwrap();
                     self.render_passes.get("ray_renderer_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                 },
                 Example::Hilbert2d => {
-                    let rp = self.vertex_buffer_infos.get("line_vb_info") .unwrap();
+                    let rp = self.vertex_buffer_infos.get("line_vb_info").unwrap();
                     self.render_passes.get("line_render_pass")
                     .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count);
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                 },
 
                 //_ => {},
@@ -1762,6 +1980,22 @@ fn create_shaders(device: &wgpu::Device) -> HashMap<String, wgpu::ShaderModule> 
 
     print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS[1].name, LINE_SHADERS[1].source_file);
     shaders.insert(LINE_SHADERS[1].name.to_string(), device.create_shader_module(wgpu::include_spirv!("line.frag.spv")));
+    println!(" ... OK'");
+
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_4PX[0].name, LINE_SHADERS_4PX[0].source_file);
+    shaders.insert(LINE_SHADERS_4PX[0].name.to_string(), device.create_shader_module(wgpu::include_spirv!("line_4px.vert.spv")));
+    println!(" ... OK'");
+
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_4PX[1].name, LINE_SHADERS_4PX[1].source_file);
+    shaders.insert(LINE_SHADERS_4PX[1].name.to_string(), device.create_shader_module(wgpu::include_spirv!("line_4px.frag.spv")));
+    println!(" ... OK'");
+
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_VN[0].name, LINE_SHADERS_VN[0].source_file);
+    shaders.insert(LINE_SHADERS_VN[0].name.to_string(), device.create_shader_module(wgpu::include_spirv!("line_vn.vert.spv")));
+    println!(" ... OK'");
+
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_VN[1].name, LINE_SHADERS_VN[1].source_file);
+    shaders.insert(LINE_SHADERS_VN[1].name.to_string(), device.create_shader_module(wgpu::include_spirv!("line_vn.frag.spv")));
     println!(" ... OK'");
 
     print!("    * Creating '{}' shader module from file '{}'",RADIX_SHADER.name, RADIX_SHADER.source_file);
@@ -2128,17 +2362,37 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Key5),
                                 ..
-                            } => state.example = Example::VolumetricNoise,
+                            } => state.example = Example::CellPoints,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Key6),
                                 ..
-                            } => state.example = Example::Volumetric3dTexture,
+                            } => state.example = Example::VolumetricNoise,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::Key7),
                                 ..
+                            } => state.example = Example::Volumetric3dTexture,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Key8),
+                                ..
                             } => state.example = Example::Hilbert2d,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::G),
+                                ..
+                            } => state.fmm_debug_state.ghost_points = !state.fmm_debug_state.ghost_points,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::L),
+                                ..
+                            } => state.fmm_debug_state.grids = !state.fmm_debug_state.grids,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::N),
+                                ..
+                            } => state.fmm_debug_state.cells = !state.fmm_debug_state.cells,
                             _ => {}
                         } // match input 
                     } // KeyboardInput

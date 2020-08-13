@@ -11,6 +11,6 @@ layout(set=0, binding=0) uniform camerauniform {
 
 void main() {
     gl_Position = u_view_proj * vec4(pos.xyz, 1.0); 
-    //gl_PointSize = 4.0;
+    gl_PointSize = 4.0;
     pos_out = pos;
 }
