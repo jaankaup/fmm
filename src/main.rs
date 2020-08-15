@@ -38,7 +38,7 @@ enum Example {
 }
 
 struct Fmm {
-    ghost_points: bool,
+    boundary_points: bool,
     grids: bool,
     cells: bool,
 }
@@ -56,7 +56,7 @@ struct Buffers {
     hilbert_2d: BufferInfo,
     fmm_points: BufferInfo,
     fmm_cell_points: BufferInfo,
-    fmm_ghost_lines: BufferInfo,
+    fmm_boundary_lines: BufferInfo,
 }
 
 // Noise 3d resolution.
@@ -82,7 +82,7 @@ static BUFFERS:  Buffers = Buffers {
     hilbert_2d:                  BufferInfo { name: "hilbert_2d",                size: None,},
     fmm_points:                  BufferInfo { name: "fmm_points",                size: None,},
     fmm_cell_points:             BufferInfo { name: "fmm_cell_points",           size: None,},
-    fmm_ghost_lines:             BufferInfo { name: "fmm_ghost_lines",           size: None,},
+    fmm_boundary_lines:             BufferInfo { name: "fmm_boundary_lines",           size: None,},
 };
 
 #[derive(Clone, Copy)]
@@ -1125,7 +1125,7 @@ impl App {
         let example = Example::TwoTriangles;
 
         let fmm_debug_state =  Fmm {
-            ghost_points: true,
+            boundary_points: true,
             grids: true,
             cells: true,
         };
@@ -1294,7 +1294,7 @@ impl App {
         /* POINT () */
 
 
-        println!("\nCreating ghostpoint pipeline and bind groups.\n");
+        println!("\nCreating boundarypoint pipeline and bind groups.\n");
         let point_info = line_info_4px(sample_count);
         let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
                         &device,
@@ -1335,25 +1335,25 @@ impl App {
         let mut domain = DomainE::new(1,20,1,20,1,20, 0.1);
         domain.initialize_boundary(|x, y, z| (x - 1.0).powf(2.0) + (y-1.0).powf(2.0) + (z-1.0).powf(2.0) - 0.1); 
         //domain.initialize_boundary(|x, y, z| z + 0.5); //
-        let fmm_ghost_data = domain.ghost_points_to_vec();
+        let fmm_boundary_data = domain.boundary_points_to_vec();
         let fmm_cell_data = domain.cells_to_vec();
-        let ghost_lines = domain.ghost_grid_to_vec();
+        let boundary_lines = domain.boundary_grid_to_vec();
 
-        let ghost_lines_buffer = Buffer::create_buffer_from_data::<f32>(
+        let boundary_lines_buffer = Buffer::create_buffer_from_data::<f32>(
             &device,
-            &ghost_lines,
+            &boundary_lines,
             wgpu::BufferUsage::VERTEX,
             None
         );
-        buffers.insert(BUFFERS.fmm_ghost_lines.name.to_string(), ghost_lines_buffer);
+        buffers.insert(BUFFERS.fmm_boundary_lines.name.to_string(), boundary_lines_buffer);
 
-        let fmm_ghost_points = Buffer::create_buffer_from_data::<f32>(
+        let fmm_boundary_points = Buffer::create_buffer_from_data::<f32>(
             &device,
-            &fmm_ghost_data,
+            &fmm_boundary_data,
             wgpu::BufferUsage::VERTEX,
             None
         );
-        buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_ghost_points);
+        buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_boundary_points);
 
         let fmm_cell_points = Buffer::create_buffer_from_data::<f32>(
             &device,
@@ -1363,18 +1363,18 @@ impl App {
         );
         buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
 
-        let ghost_point_size = domain.ghost_points.points.len() as u32;
-        println!("GHOST SIZE == {}", ghost_point_size);
+        let boundary_point_size = domain.boundary_points.points.len() as u32;
+        println!("GHOST SIZE == {}", boundary_point_size);
 
-        let fmm_ghost_vb_info = VertexBufferInfo {
+        let fmm_boundary_vb_info = VertexBufferInfo {
             vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
             _index_buffer: None,
             start_index: 0,
-            end_index: ghost_point_size,
+            end_index: boundary_point_size,
             instances: 1,
         };
 
-        vertex_buffer_infos.insert("fmm_ghost_vb_info".to_string(), fmm_ghost_vb_info);
+        vertex_buffer_infos.insert("fmm_boundary_vb_info".to_string(), fmm_boundary_vb_info);
 
         let cell_point_size = domain.cells.len() as u32;
         println!("CELL POINTS SIZE == {}", cell_point_size);
@@ -1389,34 +1389,34 @@ impl App {
 
         vertex_buffer_infos.insert("fmm_cell_vb_info".to_string(), fmm_cell_vb_info);
 
-        println!("\nCreating ghost lines pipeline and bind groups.\n");
-        let ghost_line_info = line_info(sample_count);
-        let (ghost_line_groups, ghost_line_pipeline) = create_render_pipeline_and_bind_groups(
+        println!("\nCreating boundary lines pipeline and bind groups.\n");
+        let boundary_line_info = line_info(sample_count);
+        let (boundary_line_groups, boundary_line_pipeline) = create_render_pipeline_and_bind_groups(
                         &device,
                         &sc_desc,
                         &shaders,
                         &textures,
                         &buffers,
-                        &ghost_line_info,
+                        &boundary_line_info,
                         &wgpu::PrimitiveTopology::LineList,
                         sample_count);
 
-        let ghost_line_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.fmm_ghost_lines.name.to_string(),
+        let boundary_line_vb_info = VertexBufferInfo {
+            vertex_buffer_name: BUFFERS.fmm_boundary_lines.name.to_string(),
             _index_buffer: None,
             start_index: 0,
-            end_index: ghost_lines.len() as u32 / 4,
+            end_index: boundary_lines.len() as u32 / 4,
             instances: 1,
         };
 
-        vertex_buffer_infos.insert("ghost_line_vb_info".to_string(), ghost_line_vb_info);
+        vertex_buffer_infos.insert("boundary_line_vb_info".to_string(), boundary_line_vb_info);
 
-        let ghost_line_render_pass = RenderPass {
-            pipeline: ghost_line_pipeline,
-            bind_groups: ghost_line_groups,
+        let boundary_line_render_pass = RenderPass {
+            pipeline: boundary_line_pipeline,
+            bind_groups: boundary_line_groups,
         };
 
-        render_passes.insert("ghost_line_render_pass".to_string(), ghost_line_render_pass);
+        render_passes.insert("boundary_line_render_pass".to_string(), boundary_line_render_pass);
 
         println!("");
 
@@ -1650,6 +1650,8 @@ impl App {
 
         println!("k[0] == {}", k[0]);
 
+        heap_test();
+
         Self {
             surface,
             device,
@@ -1833,8 +1835,8 @@ impl App {
 
                     let mut clear = true;
                     
-                    if self.fmm_debug_state.ghost_points == true {
-                        let rp = self.vertex_buffer_infos.get("fmm_ghost_vb_info").unwrap();
+                    if self.fmm_debug_state.boundary_points == true {
+                        let rp = self.vertex_buffer_infos.get("fmm_boundary_vb_info").unwrap();
                         self.render_passes.get("point_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, clear);
@@ -1850,10 +1852,10 @@ impl App {
                     }
 
                     if self.fmm_debug_state.grids == true {
-                        let rp_ghost_lines = self.vertex_buffer_infos.get("ghost_line_vb_info") .unwrap();
-                        self.render_passes.get("ghost_line_render_pass")
+                        let rp_boundary_lines = self.vertex_buffer_infos.get("boundary_line_vb_info") .unwrap();
+                        self.render_passes.get("boundary_line_render_pass")
                         .unwrap()
-                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_ghost_lines, self.sample_count, clear);
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_boundary_lines, self.sample_count, clear);
                         clear = false;
                     }
 
@@ -1861,7 +1863,7 @@ impl App {
                     // TODO: create some dummy draw prosedure. 
                     if clear == true {
                         let dummy = self.vertex_buffer_infos.get("dummy_vb_info") .unwrap();
-                        self.render_passes.get("ghost_line_render_pass")
+                        self.render_passes.get("boundary_line_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &dummy, self.sample_count, clear);
                     }
@@ -2382,7 +2384,7 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::G),
                                 ..
-                            } => state.fmm_debug_state.ghost_points = !state.fmm_debug_state.ghost_points,
+                            } => state.fmm_debug_state.boundary_points = !state.fmm_debug_state.boundary_points,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::L),

@@ -665,6 +665,7 @@ dependencies = [
  "hilbert_project",
  "js-sys",
  "log",
+ "ordered-float",
  "png",
  "rand 0.7.3",
  "raw-window-handle",
