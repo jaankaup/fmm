@@ -16,3 +16,4 @@ pub mod marching_cubes;
 pub mod app_resources;
 pub mod fast_marching;
 pub mod heap;
+pub mod bvh;

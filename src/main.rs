@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use rand::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 use jaankaup_hilbert::hilbert::hilbert_index_reverse;
-use cgmath::{prelude::*, Vector3};
+use cgmath::{prelude::*, Vector3, Vector4};
 use fmm::misc::*;
 use fmm::buffer::*;
 use fmm::texture::*;
@@ -16,6 +16,7 @@ use fmm::marching_cubes::*;
 //use fmm::radix_sort::*;
 use fmm::app_resources::*;
 use fmm::fast_marching::*;
+use fmm::bvh::*;
 
 use winit::{
     event::{Event, WindowEvent,KeyboardInput,ElementState,VirtualKeyCode},
@@ -41,6 +42,8 @@ struct Fmm {
     boundary_points: bool,
     grids: bool,
     cells: bool,
+    triangles: bool,
+    aabb: bool,
 }
 
 struct Buffers {
@@ -1128,6 +1131,8 @@ impl App {
             boundary_points: true,
             grids: true,
             cells: true,
+            triangles: true,
+            aabb: true,
         };
 
         // Create the surface, adapter, device and the queue.
@@ -1291,8 +1296,7 @@ impl App {
 
         println!("");
 
-        /* POINT () */
-
+        /************** FAST MARCHING **************/
 
         println!("\nCreating boundarypoint pipeline and bind groups.\n");
         let point_info = line_info_4px(sample_count);
@@ -1331,6 +1335,75 @@ impl App {
         };
 
         render_passes.insert("cell_point_render_pass".to_string(), cell_point_render_pass);
+        
+        // FAST MARCHING TRIANGLE BUFFER
+        let a = Vector3::<f32>::new(1.5, 1.6, -1.5);
+        let b = Vector3::<f32>::new(1.65, 1.4, -2.3);
+        let c = Vector3::<f32>::new(1.2, 1.1, -0.7);
+        let a_n = (b-a).cross(c-a).normalize();
+
+        let mut fmm_a_buffer: Vec<f32> = Vec::new();
+
+        fmm_a_buffer.push(a.x);
+        fmm_a_buffer.push(a.y);
+        fmm_a_buffer.push(a.z);
+        fmm_a_buffer.push(1.0);
+
+        fmm_a_buffer.push(a_n.x);
+        fmm_a_buffer.push(a_n.y);
+        fmm_a_buffer.push(a_n.z);
+        fmm_a_buffer.push(0.0);
+
+        fmm_a_buffer.push(b.x);
+        fmm_a_buffer.push(b.y);
+        fmm_a_buffer.push(b.z);
+        fmm_a_buffer.push(1.0);
+
+        fmm_a_buffer.push(a_n.x);
+        fmm_a_buffer.push(a_n.y);
+        fmm_a_buffer.push(a_n.z);
+        fmm_a_buffer.push(0.0);
+
+        fmm_a_buffer.push(c.x);
+        fmm_a_buffer.push(c.y);
+        fmm_a_buffer.push(c.z);
+        fmm_a_buffer.push(1.0);
+
+        fmm_a_buffer.push(a_n.x);
+        fmm_a_buffer.push(a_n.y);
+        fmm_a_buffer.push(a_n.z);
+        fmm_a_buffer.push(0.0);
+
+        let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &fmm_a_buffer,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+
+        buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
+
+        let fmm_triangle_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "fmm_triangle_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: fmm_a_buffer.len() as u32 / 8,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
+
+        let aabb = BBox::new(&a, &b, &c);
+        let aabb_lines = aabb.to_lines();
+
+        let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &aabb_lines,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+
+        buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
 
         let mut domain = DomainE::new(1,20,1,20,1,20, 0.1);
         domain.initialize_boundary(|x, y, z| (x - 1.0).powf(2.0) + (y-1.0).powf(2.0) + (z-1.0).powf(2.0) - 0.1); 
@@ -1347,6 +1420,16 @@ impl App {
         );
         buffers.insert(BUFFERS.fmm_boundary_lines.name.to_string(), boundary_lines_buffer);
 
+        let aabb_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "fmm_aabb_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: aabb_lines.len() as u32 / 4,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("aabb_vb_info".to_string(), aabb_vb_info);
+
         let fmm_boundary_points = Buffer::create_buffer_from_data::<f32>(
             &device,
             &fmm_boundary_data,
@@ -1361,10 +1444,10 @@ impl App {
             wgpu::BufferUsage::VERTEX,
             None
         );
+
         buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
 
         let boundary_point_size = domain.boundary_points.points.len() as u32;
-        println!("GHOST SIZE == {}", boundary_point_size);
 
         let fmm_boundary_vb_info = VertexBufferInfo {
             vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
@@ -1844,7 +1927,7 @@ impl App {
                     }
 
                     if self.fmm_debug_state.cells == true {
-                        let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info") .unwrap();
+                        let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info").unwrap();
                         self.render_passes.get("cell_point_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_cell, self.sample_count, clear);
@@ -1852,30 +1935,44 @@ impl App {
                     }
 
                     if self.fmm_debug_state.grids == true {
-                        let rp_boundary_lines = self.vertex_buffer_infos.get("boundary_line_vb_info") .unwrap();
+                        let rp_boundary_lines = self.vertex_buffer_infos.get("boundary_line_vb_info").unwrap();
                         self.render_passes.get("boundary_line_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_boundary_lines, self.sample_count, clear);
+                        clear = false;
+                    }
+                    if self.fmm_debug_state.triangles == true {
+                        let rp_triangles = self.vertex_buffer_infos.get(&"fmm_triangles_vb_info".to_string()).unwrap();
+                        self.render_passes.get("mc_renderer_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_triangles, self.sample_count, clear);
+                        clear = false;
+                    }
+                    if self.fmm_debug_state.aabb == true {
+                        let rp_aabb = self.vertex_buffer_infos.get(&"aabb_vb_info".to_string()).unwrap();
+                        self.render_passes.get("boundary_line_render_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_aabb, self.sample_count, clear);
                         clear = false;
                     }
 
                     // All above all disabled. We must draw something or application will crash.
                     // TODO: create some dummy draw prosedure. 
                     if clear == true {
-                        let dummy = self.vertex_buffer_infos.get("dummy_vb_info") .unwrap();
+                        let dummy = self.vertex_buffer_infos.get("dummy_vb_info").unwrap();
                         self.render_passes.get("boundary_line_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &dummy, self.sample_count, clear);
                     }
                 },
                 Example::CellPoints => {
-                    let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info") .unwrap();
+                    let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info").unwrap();
                     self.render_passes.get("cell_point_render_pass")
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_cell, self.sample_count, true);
                 },
                 Example::VolumetricNoise => {
-                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info") .unwrap();
+                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info").unwrap();
                     self.render_passes.get("ray_renderer_pass")
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
@@ -2395,6 +2492,16 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 virtual_keycode: Some(VirtualKeyCode::N),
                                 ..
                             } => state.fmm_debug_state.cells = !state.fmm_debug_state.cells,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::B),
+                                ..
+                            } => state.fmm_debug_state.aabb = !state.fmm_debug_state.aabb,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::T),
+                                ..
+                            } => state.fmm_debug_state.triangles = !state.fmm_debug_state.triangles,
                             _ => {}
                         } // match input 
                     } // KeyboardInput

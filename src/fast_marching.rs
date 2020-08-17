@@ -13,6 +13,7 @@ pub enum Cell {
     Far(),
 }
 
+
 //   Initial state
 //  
 //   I :: Surface ( b(x) == 0 )
@@ -415,6 +416,25 @@ pub fn heap_test() {
         };
         println!("HEAP TEST :: {}", result);
     }
+}
+
+pub fn aabb(a: &Vector4<f32>, b: &Vector4<f32>, c: &Vector4<f32>) {
+
+    let mut min_x = a.x;
+    let mut min_y = a.y;
+    let mut min_z = a.z;
+    let mut max_x = a.x;
+    let mut max_y = a.y;
+    let mut max_z = a.z;
+
+   if b.x < min_x { min_x = b.x } 
+   if b.y < min_y { min_y = b.y } 
+   if b.z < min_z { min_z = b.z } 
+
+   if c.x < min_x { min_x = c.x } 
+   if c.y < min_y { min_y = c.y } 
+   if c.z < min_z { min_z = c.z } 
+
 }
 
 //fn get_cell(i: u32, j: u32, k: u32, domain: &DomainE) -> Result<Cell, String> {
