@@ -18,3 +18,4 @@ pub mod fast_marching;
 pub mod heap;
 pub mod bvh;
 pub mod fmm;
+pub mod object_loader;

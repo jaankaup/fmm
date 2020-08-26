@@ -13,6 +13,11 @@ pub struct BBox {
 }
 
 impl BBox {
+
+    // pub fn new() -> BBox {
+    //     let result = BBox { min: Vector::<f32>::new(0.0, 0.0, 0.0), max: Vector::<f32>::new(0.0, 0.0, 0.0), };
+    //     result
+    // }
     
     /// Create bounding box from two vectors.
     pub fn create_from_line(a: &Vector3<f32>, b: &Vector3<f32>) -> Self {
@@ -37,6 +42,13 @@ impl BBox {
     pub fn expand(&mut self, p: &Vector3<f32>) {
         self.min = Vector3::<f32>::new(self.min.x.min(p.x), self.min.y.min(p.y), self.min.z.min(p.z));
         self.max = Vector3::<f32>::new(self.max.x.max(p.x), self.max.y.max(p.y), self.max.z.max(p.z));
+    }
+
+    pub fn combine(a: &BBox, b: &BBox) -> BBox {
+        let mut result = a.clone();
+        result.expand(&b.min);
+        result.expand(&b.max);
+        result
     }
 
     /// This should to be moved into FMM_Domain. // TODO
@@ -231,8 +243,8 @@ impl Triangle {
         let point = self.closest_point_to_triangle(&p);
         let dot_p = normal.dot(point - p);
         let sign = { 
-            if dot_p < 0.0 { false } 
-            else { true }
+            if dot_p < 0.0 { true } 
+            else { false }
         };
         //println!("SIGN == {}", sign);
         (point.distance(*p), sign)

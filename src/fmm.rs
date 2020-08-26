@@ -546,51 +546,8 @@ impl FMM_Domain {
                                 cell = Cell::Known(signed_distance, normal); self.set_cell(q, r, s, cell); new_found = true;
                             }
                         }
-                        //// if new_found {
-                        ////     let cell_color = match sign { true => encode_rgba_u32(255, 50, 50, 255), false => encode_rgba_u32(50, 50, 200, 255) } ; 
-
-                        ////     // Cubes.
-                        ////     let mut temp_c: Vec<Vertex_vvvc_nnnn> = Vec::new();
-
-                        ////     // Lines.
-                        ////     let mut temp_l: Vec<Vertex_vvvc> = Vec::new();
-
-                        ////     let index = self.get_array_index(q, r, s).unwrap();
-                        ////     temp_c.extend(create_cube_triangles(cell_pos , 0.006, cell_color));
-
-                        ////     temp_l.push(Vertex_vvvc {
-                        ////         position: [cell_pos.x, cell_pos.y, cell_pos.z],
-                        ////         color: cell_color,// encode_rgba_u32(255, 50, 50, 255),
-                        ////     });
-                        ////     temp_l.push(Vertex_vvvc {
-                        ////         position: [triangle_point.x, triangle_point.y, triangle_point.z], 
-                        ////         color: cell_color, //encode_rgba_u32(100, 50, 255, 255),
-                        ////     });
-                        ////     //println!("cell_pos :: {}, {} {} . triangle_point :: {}, {}, {}", cell_pos.x, cell_pos.y, cell_pos.z, triangle_point.x, triangle_point.y, triangle_point.z); 
-
-                        ////     //temp_cells.remove(&index); 
-                        ////     temp_cells.insert(index, (temp_c, temp_l)); 
-                        ////     
-                        ////     //temp.cell.insert(self.get_array_index(i, j, k).unwrap(),
-                        ////     //    (create_cube_triangles(cell_pos , 0.006, cell_color),
-                        //// }
-                        //let cell_color = match sign { true => encode_rgba_u32(255, 50, 50, 255), false => encode_rgba_u32(50, 50, 200, 255) } ; 
-                        //let cube = create_cube_triangles(cell_pos , 0.006, cell_color);
-                        //result.extend(cube);
-                        //result2.push(Vertex_vvvc {
-                        //    position: [cell_pos.x, cell_pos.y, cell_pos.z],
-                        //    color: cell_color,// encode_rgba_u32(255, 50, 50, 255),
-                        //});
-                        //result2.push(Vertex_vvvc {
-                        //    position: [triangle_point.x, triangle_point.y, triangle_point.z], 
-                        //    color: cell_color, //encode_rgba_u32(100, 50, 255, 255),
-                        //});
                     }
                 }}};
-                //// for (_, (c,l)) in &temp_cells {
-                ////     result.extend(c); 
-                ////     result2.extend(l); 
-                //// }
             }
         }
 
@@ -628,5 +585,49 @@ impl FMM_Domain {
             }
         }}};
         (result, result2)
+    }
+
+    pub fn create_grid_point_and_line_data(&self, show_known: bool, show_band: bool, show_far: bool, create_lines: bool) -> (Vec<Vertex_vvvc_nnnn>, Vec<Vertex_vvvc>) {
+
+        // Cubes.
+        let mut grid_cubes: Vec<Vertex_vvvc_nnnn> = Vec::new();
+
+        // Lines.
+        let mut lines: Vec<Vertex_vvvc> = Vec::new();
+
+        for i in 0..self.dimension.0.end {
+        for j in 0..self.dimension.1.end {
+        for k in 0..self.dimension.2.end {
+            let item = self.get_cell(i, j, k);
+            let grid_pos = self.ijk_to_xyz(i, j, k).unwrap(); 
+            match item {
+                Cell::Known(dist, dir) => {
+                    let sign = if dist < 0.0 { false } else { true }; 
+                    let grid_pos = self.ijk_to_xyz(i, j, k).unwrap(); 
+                    let triangle_point = grid_pos - dir * dist.abs(); 
+                    let cell_color = match sign { true => encode_rgba_u32(255, 50, 50, 255), false => encode_rgba_u32(50, 50, 200, 255) } ; 
+                    let cube = create_cube_triangles(grid_pos , 0.006, cell_color);
+                    grid_cubes.extend(cube);
+                    lines.push(Vertex_vvvc {
+                        position: [grid_pos.x, grid_pos.y, grid_pos.z],
+                        color: cell_color,// encode_rgba_u32(255, 50, 50, 255),
+                    });
+                    lines.push(Vertex_vvvc {
+                        position: [triangle_point.x, triangle_point.y, triangle_point.z], 
+                        color: cell_color, //encode_rgba_u32(100, 50, 255, 255),
+                    });
+                    
+                }
+                Cell::Band(dist, dir) => {
+                    
+                }
+                Cell::Far() => {
+                    // let cell_color = encode_rgba_u32(50, 155, 50, 255); 
+                    // let cube = create_cube_triangles(grid_pos , 0.001, cell_color);
+                    // result.extend(cube);
+                }
+            }
+        }}};
+        (grid_cubes, lines)
     }
 }

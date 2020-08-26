@@ -33,6 +33,7 @@ rand = { version = "0.7.3", features = ["wasm-bindgen"] }
 #serde = { version = "1.0.104", features = ["derive"] } 
 #ron = "0.5.1"
 ordered-float = "1.0.1"
+obj-rs = "0.6.1"
 
 #[build-dependencies]
 #bindgen = "0.53.1"

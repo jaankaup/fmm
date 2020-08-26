@@ -1,4 +1,5 @@
 //use futures::task::LocalSpawn;
+use fmm::object_loader::load_triangles_from_obj;
 use std::borrow::Cow::Borrowed;
 //use futures::executor::LocalPool;
 //use futures::executor::LocalSpawner;
@@ -1387,39 +1388,11 @@ impl App {
         };
 
         render_passes.insert("point_render_pass".to_string(), point_render_pass);
-        ////let triangle = Triangle {
-        ////    a: Vector3::<f32>::new(1.46, 1.61, 1.59),
-        ////    b: Vector3::<f32>::new(1.66, 1.43, 1.3),
-        ////    c: Vector3::<f32>::new(1.2999, 1.0, 0.9999)
-        ////};
-        ////let triangle_2 = Triangle {
-        ////    a: Vector3::<f32>::new(0.1, 0.1, 0.2),
-        ////    b: Vector3::<f32>::new(0.5, 1.1, 0.5),
-        ////    c: Vector3::<f32>::new(0.3, 0.3, 0.7)
-        ////};
-
-        ////let mut fmm_a_buffer: Vec<f32> = triangle.to_f32_vec(&VertexType::vvvvnnnn()); // Vec::new();
-        ////// fmm_a_buffer.extend(&triangle_2.to_f32_vec(&VertexType::vvvvnnnn()));
 
         ////// /* AABB */
 
         ////// let (tr, bbox, plane) = domain.initialize_from_triangle_list(&vertex_list_f32, &VertexType::vvv());
 
-        ////let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<f32>(
-        ////    &device,
-        ////    &fmm_a_buffer,
-        ////    wgpu::BufferUsage::VERTEX,
-        ////    None
-        ////);
-        ////buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
-
-        ////let fmm_triangle_vb_info = VertexBufferInfo {
-        ////    vertex_buffer_name: "fmm_triangle_buffer".to_string(),
-        ////    _index_buffer: None,
-        ////    start_index: 0,
-        ////    end_index: fmm_a_buffer.len() as u32 / 8,
-        ////    instances: 1,
-        ////};
 
         ////vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
 
@@ -1432,34 +1405,61 @@ impl App {
 
         // buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
 
-        let mut vertex_list_f32: Vec<f32> = Vec::new();
-        vertex_list_f32.push(1.46); vertex_list_f32.push(1.61); vertex_list_f32.push(-1.59);
-        vertex_list_f32.push(1.66); vertex_list_f32.push(1.43); vertex_list_f32.push(-1.3);
-        vertex_list_f32.push(1.2999); vertex_list_f32.push(1.0); vertex_list_f32.push(-0.9999);
-        vertex_list_f32.push(0.1); vertex_list_f32.push(0.1); vertex_list_f32.push(-0.2);
-        vertex_list_f32.push(0.5); vertex_list_f32.push(1.1); vertex_list_f32.push(-0.5);
-        vertex_list_f32.push(0.3); vertex_list_f32.push(0.3); vertex_list_f32.push(-0.7);
-
         // CREATE DOMAIN 
 
-        let mut fmm_domain = FMM_Domain::new((64, 64, 64), Vector3::<f32>::new(0.0, 0.0, 0.0), 0.05, false);
+        let (mut mc_triangle_data, aabb): (Vec<Triangle>, BBox) = load_triangles_from_obj("bunny.obj").unwrap();
+        let length = aabb.min.distance(aabb.max);
+        let mut scene_aabb = BBox { min: Vector3::<f32>::new(0.0, 0.0, 0.0), max: Vector3::<f32>::new(0.0, 0.0, 0.0), }; 
+        scene_aabb.expand(&(aabb.min - Vector3::<f32>::new(aabb.min.x.abs(), aabb.min.y.abs(), aabb.min.z.abs())));
+        scene_aabb.expand(&(aabb.max + Vector3::<f32>::new(aabb.max.x.abs(), aabb.max.y.abs(), aabb.max.z.abs())));
+        let base_position = scene_aabb.min;
+        let grid_length_x = (scene_aabb.min.x - scene_aabb.max.x).abs();
+        let grid_length_y = (scene_aabb.min.y - scene_aabb.max.y).abs();
+        let grid_length_z = (scene_aabb.min.z - scene_aabb.max.z).abs();
+        let grid_length = grid_length_x.max(grid_length_y).max(grid_length_z) / 80.0;
+
+        // BUNNY
+        
+        let mut bunny_data: Vec<Vertex_vvvv_nnnn> = Vec::new();
+        for tr in mc_triangle_data.iter() {
+            let normal = (tr.a-tr.b).cross(tr.a-tr.b).normalize(); //ac.cross(ab).normalize();
+            let normal_array = [normal.x, normal.y, normal.z, 0.0];
+            let result = Vertex_vvvv_nnnn {
+                position: [tr.a.x, tr.a.y, tr.a.z, 1.0],
+                normal: normal_array,
+            };
+            bunny_data.push(result);
+            let result = Vertex_vvvv_nnnn {
+                position: [tr.b.x, tr.b.y, tr.b.z, 1.0],
+                normal: normal_array,
+            };
+            bunny_data.push(result);
+            let result = Vertex_vvvv_nnnn {
+                position: [tr.c.x, tr.c.y, tr.c.z, 1.0],
+                normal: normal_array,
+            };
+            bunny_data.push(result);
+        }
+        let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<Vertex_vvvv_nnnn>(
+            &device,
+            &bunny_data,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
+        buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
+
+        let fmm_triangle_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "fmm_triangle_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: bunny_data.len() as u32,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
+
+        let mut fmm_domain = FMM_Domain::new((80, 80, 80), base_position, grid_length, false);
         println!("NEW TESTS");
-        // fmm_domain.xyz_to_ijk(&Vector3::<f32>::new(0.05, 0.1, 0.1));
-        // fmm_domain.ijk_to_xyz(1, 0, 0);
-        // fmm_domain.xyz_to_nearest_cell_xyz(&Vector3::<f32>::new(0.05,0.1,0.1));
-        // fmm_domain.xyz_to_all_nearest_ijk(&Vector3::<f32>::new(0.95,0.96,0.96));
-        // fmm_domain.xyz_to_all_nearest_ijk(&Vector3::<f32>::new(0.95,0.96,0.96));
-        // fmm_domain.xyz_to_all_nearest_cells_xyz(&Vector3::<f32>::new(0.95,0.96,0.96)).unwrap();
-
-        //// let fmm_cell_data = fmm_domain.cells_to_vvvc_nnnn();
-        //// let fmm_cell_points = Buffer::create_buffer_from_data::<Vertex_vvvc_nnnn>(
-        ////     &device,
-        ////     &fmm_cell_data,
-        ////     wgpu::BufferUsage::VERTEX,
-        ////     None
-        //// );
-
-        //// buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
 
         // Create vvvc_nnnn pipelines and render passes.
         println!("CREATING CELL CUBES GROUP");
@@ -1481,16 +1481,6 @@ impl App {
 
         render_passes.insert("cell_cubes_render_pass".to_string(), cell_cubes_render_pass);
 
-        //// let cell_point_size = fmm_cell_data.len() as u32;
-        //// println!("cell_point_size == {}", cell_point_size);
-
-        //// let fmm_cell_vb_info = VertexBufferInfo {
-        ////     vertex_buffer_name: BUFFERS.fmm_cell_points.name.to_string(),
-        ////     _index_buffer: None,
-        ////     start_index: 0,
-        ////     end_index: cell_point_size,
-        ////     instances: 1,
-        //// };
 
         //// vertex_buffer_infos.insert("fmm_cell_vb_info".to_string(), fmm_cell_vb_info);
 
@@ -1552,19 +1542,14 @@ impl App {
         //    //     mcd.normal[0], mcd.normal[1], mcd.normal[2], mcd.normal[3]); 
         //}
 
-        let mut mc_triangle_data: Vec<Triangle> = Vec::new();
-        for i in 0..(mc_vertex_count/3) {
-            let offset = (i*3) as usize;
-            let a = Vector3::<f32>::new(marching_cubes_data[offset].position[0]  , marching_cubes_data[offset].position[1],     marching_cubes_data[offset].position[2]); 
-            let b = Vector3::<f32>::new(marching_cubes_data[offset+1].position[0], marching_cubes_data[offset + 1].position[1], marching_cubes_data[offset + 1].position[2]); 
-            let c = Vector3::<f32>::new(marching_cubes_data[offset+2].position[0], marching_cubes_data[offset + 2].position[1], marching_cubes_data[offset + 2].position[2]); 
-            mc_triangle_data.push(Triangle {a: a, b: b, c: c, });
-        }
-
-        //for tr in mc_triangle_data.iter() {
-        //    println!("Triangle [({}, {}, {}), ({}, {}, {}), ({}, {}, {})].", 
-        //        tr.a.x, tr.a.y, tr.a.z, tr.b.x, tr.b.y, tr.b.z, tr.c.x, tr.c.y, tr.c.z); 
-        //}
+        //// let mut mc_triangle_data: Vec<Triangle> = Vec::new();
+        //// for i in 0..(mc_vertex_count/3) {
+        ////     let offset = (i*3) as usize;
+        ////     let a = Vector3::<f32>::new(marching_cubes_data[offset].position[0]  , marching_cubes_data[offset].position[1],     marching_cubes_data[offset].position[2]); 
+        ////     let b = Vector3::<f32>::new(marching_cubes_data[offset+1].position[0], marching_cubes_data[offset + 1].position[1], marching_cubes_data[offset + 1].position[2]); 
+        ////     let c = Vector3::<f32>::new(marching_cubes_data[offset+2].position[0], marching_cubes_data[offset + 2].position[1], marching_cubes_data[offset + 2].position[2]); 
+        ////     mc_triangle_data.push(Triangle {a: a, b: b, c: c, });
+        //// }
 
         let (cubes, lines) = fmm_domain.add_triangles(&mc_triangle_data);
 
@@ -1977,16 +1962,16 @@ impl App {
                     }
                                      
                     if self.fmm_debug_state.triangles == true {
-                        let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info").unwrap();
-                        self.render_passes.get("mc_renderer_pass")
-                        .unwrap()
-                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
-                        clear = false;
-                        // let rp_triangles = self.vertex_buffer_infos.get(&"fmm_triangles_vb_info".to_string()).unwrap();
+                        // let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info").unwrap();
                         // self.render_passes.get("mc_renderer_pass")
                         // .unwrap()
-                        // .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_triangles, self.sample_count, clear);
+                        // .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                         // clear = false;
+                        let rp_triangles = self.vertex_buffer_infos.get(&"fmm_triangles_vb_info".to_string()).unwrap();
+                        self.render_passes.get("mc_renderer_pass")
+                        .unwrap()
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_triangles, self.sample_count, clear);
+                        clear = false;
                     }
                                      
                     if self.fmm_debug_state.aabb == true {
