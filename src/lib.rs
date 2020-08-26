@@ -17,3 +17,4 @@ pub mod app_resources;
 pub mod fast_marching;
 pub mod heap;
 pub mod bvh;
+pub mod fmm;

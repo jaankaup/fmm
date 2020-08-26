@@ -1,8 +1,12 @@
+//use cgmath::structure::MetricSpace;
 //fn d_minus_x() 
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
-use cgmath::{Vector3, Vector4};
+use cgmath::{prelude::*,Vector3, Vector4};
 use ordered_float::NotNan;
+//use misc::VertexType;
+use crate::misc::VertexType;
+use crate::bvh::{Triangle, BBox, Plane}; 
 
 type MinNonNan = Reverse<NotNan<f32>>;
 
@@ -118,6 +122,12 @@ impl DomainE {
         }
     }
 
+    fn set_cell(&mut self, i: u32, j: u32, k: u32, cell: &Cell) {
+        self.check_cell_index(i, j, k, true); // TODO: this should be checked when range is generated. TODO: remove in the future.
+        let index = self.get_cell_index(i, j, k).unwrap(); // as usize;
+        self.cells[index] = *cell;
+    }
+
     fn get_x_range(&self) -> std::ops::Range<u32> {
         let width = self.max_x - self.min_x + 1;
         std::ops::Range {start: 0, end: width }
@@ -148,10 +158,32 @@ impl DomainE {
         std::ops::Range {start: 0, end: depth }
     }
 
-    fn check_cell_index(&self, i: u32, j: u32, k: u32) {
-        assert!(i >= self.min_x || i <= self.max_x, "check_cell_index:: i :: {} not in range [{}, {}]", i, self.min_x, self.max_x);
-        assert!(j >= self.min_y || j <= self.max_y, "check_cell_index:: j :: {} not in range [{}, {}]", j, self.min_y, self.max_y);
-        assert!(k >= self.min_z || k <= self.max_z, "check_cell_index:: k :: {} not in range [{}, {}]", k, self.min_z, self.max_z);
+    // 
+    pub fn get_index_ranges_aabb(&self, aabb: &BBox) -> (std::ops::Range<u32>,  std::ops::Range<u32>, std::ops::Range<u32>) {
+
+        let (x_min, y_min, z_max) = self.get_cell_indices_wc(&aabb.min).unwrap();// -> Option<(u32, u32, u32)> {
+        let (x_max, y_max, z_min) = self.get_cell_indices_wc(&aabb.max).unwrap();// -> Option<(u32, u32, u32)> {
+        // println!("Range_x :: [{}, {}]", x_min, x_max);
+        // println!("Range_y :: [{}, {}]", y_min, y_max);
+        // println!("Range_z :: [{}, {}]", z_min, z_max);
+        (std::ops::Range {start: x_min, end: x_max},
+         std::ops::Range {start: y_min, end: y_max},
+         std::ops::Range {start: z_min, end: z_max})
+    }
+
+
+    fn check_cell_index(&self, i: u32, j: u32, k: u32, assert: bool) -> bool {
+        let x_ok = i >= self.min_x || i <= self.max_x;
+        let y_ok = j >= self.min_y || j <= self.max_y;
+        let z_ok = k >= self.min_z || k <= self.max_z;
+
+        if assert {
+            assert!(i >= self.min_x || i <= self.max_x, "check_cell_index:: i :: {} not in range [{}, {}]", i, self.min_x, self.max_x);
+            assert!(j >= self.min_y || j <= self.max_y, "check_cell_index:: j :: {} not in range [{}, {}]", j, self.min_y, self.max_y);
+            assert!(k >= self.min_z || k <= self.max_z, "check_cell_index:: k :: {} not in range [{}, {}]", k, self.min_z, self.max_z);
+        }
+
+        x_ok && y_ok && z_ok
     }
 
     fn check_boundary_index(&self, i: u32, j: u32, k: u32) {
@@ -161,7 +193,7 @@ impl DomainE {
     }
 
     fn get_cell_coordinates(&self, i: u32, j: u32, k: u32) -> Vector4<f32> {
-        self.check_cell_index(i, j, k); // TODO: this should be checked when range is generated. TODO: remove in the future.
+        self.check_cell_index(i, j, k, true); // TODO: this should be checked when range is generated. TODO: remove in the future.
         let result: Vector4<f32> = Vector4::new(
             (self.min_x + i) as f32 * self.scale_factor,
             (self.min_y + j) as f32 * self.scale_factor,      
@@ -170,6 +202,18 @@ impl DomainE {
         );
 
         result
+    }
+
+    /// Get the nearest cell indices from world coordinates.
+    fn get_cell_indices_wc(&self, w_pos: &Vector3<f32>) -> Option<(u32, u32, u32)> {
+        let x_index = (w_pos.x / self.scale_factor).floor() as u32; 
+        let y_index = (w_pos.y / self.scale_factor).floor() as u32; 
+        let z_index = (-w_pos.z / self.scale_factor).floor() as u32; 
+        if x_index == 0 || y_index == 0 || z_index == 0 {
+            return None
+        }
+        if !self.check_cell_index(x_index - 1, y_index - 1, z_index - 1, false) { None } 
+        else { Some((x_index - 1, y_index - 1, z_index - 1)) }
     }
 
     fn get_boundary_coordinates(&self, i: u32, j: u32, k: u32) -> Vector4<f32> {
@@ -186,7 +230,7 @@ impl DomainE {
 
     /// Get cell index from point (i, j, k).
     fn get_cell_index(&self, i: u32, j: u32, k: u32) -> Result<usize, String> {
-        self.check_cell_index(i, j, k); // TODO: this should be checked when range is generated. TODO: remove in the future.
+        self.check_cell_index(i, j, k, true); // TODO: this should be checked when range is generated. TODO: remove in the future.
         let x_range = self.get_x_range(); 
         let y_range = self.get_y_range(); 
         let index = i + j * x_range.end + k * x_range.end * y_range.end;
@@ -336,9 +380,6 @@ impl DomainE {
     /// Initialize values for boundary points.
     pub fn initialize_boundary<F: Fn(f32, f32, f32) -> f32>(&mut self, b: F) {
 
-        // let boundary_width = self.max_x - self.min_x + 2;
-        // let boundary_height = self.max_y - self.min_y + 2;
-        // let boundary_depth = self.max_z - self.min_z + 2;
         let mut min_value: f32 = 0.0;
         let mut max_value: f32 = 0.0;
 
@@ -361,6 +402,223 @@ impl DomainE {
 
         self.min_boundary_value = min_value;
         self.max_boundary_value = max_value;
+    }
+
+    // Neighbor points and the nearest neighbor as Vec.
+    pub fn get_neighbor_grid_points(&self, p: &Vector3<f32>) -> Vec<f32> {
+        let x_minus = (p.x / self.scale_factor).floor() * self.scale_factor;
+        let y_minus = (p.y / self.scale_factor).floor() * self.scale_factor;
+        let z_minus = (p.z / self.scale_factor).floor() * self.scale_factor;
+        let x_plus  = (p.x / self.scale_factor).ceil()  * self.scale_factor;
+        let y_plus  = (p.y / self.scale_factor).ceil()  * self.scale_factor;
+        let z_plus  = (p.z / self.scale_factor).ceil()  * self.scale_factor;
+
+        let p0 = Vector3::<f32>::new(x_minus, y_minus, z_minus);
+        let p1 = Vector3::<f32>::new(x_minus, y_plus, z_minus);
+        let p2 = Vector3::<f32>::new(x_plus,  y_plus, z_minus);
+        let p3 = Vector3::<f32>::new(x_minus, y_plus, z_minus);
+
+        let p4 = Vector3::<f32>::new(x_minus, y_minus, z_plus);
+        let p5 = Vector3::<f32>::new(x_minus, y_plus , z_plus);
+        let p6 = Vector3::<f32>::new(x_plus , y_plus , z_plus);
+        let p7 = Vector3::<f32>::new(x_plus , y_minus, z_plus);
+
+        let mut result: Vec<Vector3<f32>> = Vec::new(); 
+        result.push(p0);
+        result.push(p1);
+        result.push(p2);
+        result.push(p3);
+        result.push(p4);
+        result.push(p5);
+        result.push(p6);
+        result.push(p7);
+
+        let mut min_distance: f32 = p0.distance(*p);
+        let mut closest_points: Vec<Vector3<f32>> = Vec::new();
+        let mut line_data: Vec<f32> = Vec::new();
+
+        for neighbor in result.iter() {
+            let temp_dist = p.distance(*neighbor);  
+            if temp_dist < self.scale_factor {
+                closest_points.push(neighbor.clone());
+            }
+            // if temp_dist < min_distance { 
+            //     min_distance = temp_dist;
+            //     closest_point = neighbor.clone();
+            // }
+        }
+
+        for canditate in closest_points.iter() {
+            line_data.push(p.x);
+            line_data.push(p.y);
+            line_data.push(p.z);
+            line_data.push(1.0);
+
+            line_data.push(canditate.x);
+            line_data.push(canditate.y);
+            line_data.push(canditate.z);
+            line_data.push(1.0);
+        }
+
+        //let (i, j, k) = self.get_cell_indices_wc(&closest_point).unwrap();
+        //println!("Index is ({}, {}, {})", i, j, k);
+
+        // line_data.push(p.x);
+        // line_data.push(p.y);
+        // line_data.push(p.z);
+        // line_data.push(1.0);
+
+        // line_data.push(closest_point.x);
+        // line_data.push(closest_point.y);
+        // line_data.push(closest_point.z);
+        // line_data.push(1.0);
+
+        // line_data.push(p.x + 0.001);
+        // line_data.push(p.y + 0.001);
+        // line_data.push(p.z + 0.001);
+        // line_data.push(1.0);
+
+        // line_data.push(closest_point.x);
+        // line_data.push(closest_point.y);
+        // line_data.push(closest_point.z);
+        // line_data.push(1.0);
+
+        // line_data.push(p.x - 0.001);
+        // line_data.push(p.y - 0.001);
+        // line_data.push(p.z - 0.001);
+        // line_data.push(1.0);
+
+        // line_data.push(closest_point.x);
+        // line_data.push(closest_point.y);
+        // line_data.push(closest_point.z);
+        // line_data.push(1.0);
+
+        // line_data.push(p.x + 0.001);
+        // line_data.push(p.y + 0.001);
+        // line_data.push(p.z + 0.001);
+        // line_data.push(1.0);
+
+        // line_data.push(p.x - 0.001);
+        // line_data.push(p.y - 0.001);
+        // line_data.push(p.z - 0.001);
+        // line_data.push(1.0);
+        
+        line_data
+    }
+
+    pub fn initialize_from_triangle_list(&mut self, vertex_list: &Vec<f32>, vt: &VertexType) -> (Vec<f32>, Vec<f32>, Vec<Plane>) {
+
+        let mut aabbs: Vec<BBox> = Vec::new(); 
+        let mut triangles: Vec<Triangle> = Vec::new(); 
+        let mut planes: Vec<Plane> = Vec::new(); 
+
+        match vt {
+
+            VertexType::vvv() => {
+
+                let modulo = vertex_list.len() % 9;
+                if modulo != 0 { panic!("initialize_from_triangle_list. vvv: triangle_list % 9 == {}", modulo) }
+
+                for i in 0..vertex_list.len() / 9 {
+                    let a: Vector3<f32> = Vector3::<f32>::new(vertex_list[i*9],     vertex_list[i*9 + 1], vertex_list[i*9 + 2]);
+                    let b: Vector3<f32> = Vector3::<f32>::new(vertex_list[i*9 + 3], vertex_list[i*9 + 4], vertex_list[i*9 + 5]);
+                    let c: Vector3<f32> = Vector3::<f32>::new(vertex_list[i*9 + 6], vertex_list[i*9 + 7], vertex_list[i*9 + 8]);
+
+                    // Triangle is outside the computational domain.
+
+                    if self.get_cell_indices_wc(&a) == None ||
+                       self.get_cell_indices_wc(&b) == None ||
+                       self.get_cell_indices_wc(&c) == None {
+                            println!("Vertex is outside computational domain.");
+                            continue;
+                    }
+                    
+                    let (a1, b1, c1) = self.get_cell_indices_wc(&a).unwrap();
+                    let (a2, b2, c2) = self.get_cell_indices_wc(&b).unwrap();
+                    let (a3, b3, c3) = self.get_cell_indices_wc(&c).unwrap();
+
+                    let min_x_index = a1.min(a2).min(a3); 
+                    let min_y_index = b1.min(b2).min(b3); 
+                    let min_z_index = c1.min(c2).min(c3); 
+
+                    let max_x_index = a1.max(a2).max(a3); 
+                    let max_y_index = b1.max(b2).max(b3); 
+                    let max_z_index = c1.max(c2).max(c3); 
+
+                    let range_x = std::ops::Range {start: min_x_index, end: max_x_index };
+                    let range_y = std::ops::Range {start: min_y_index, end: max_y_index };
+                    let range_z = std::ops::Range {start: min_z_index, end: max_z_index };
+
+                    println!("(a1 :: {}, b1 :: {}, c1 :: {})", a1, b1, c1);
+                    println!("(a2 :: {}, b2 :: {}, c2 :: {})", a2, b2, c2);
+                    println!("(a3 :: {}, b3 :: {}, c3 :: {})", a3, b3, c3);
+
+                    println!("(range_x :: [{} , {}]", min_x_index, max_x_index);
+                    println!("(range_y :: [{} , {}]", min_y_index, max_y_index);
+                    println!("(range_z :: [{} , {}]", min_z_index, max_z_index);
+                    
+                    triangles.push(Triangle {
+                        a: a,
+                        b: b,
+                        c: c,
+                    });
+
+                    let mut aabb = BBox::create_from_triangle(&a, &b, &c);
+                    aabb.expand_to_nearest_grids(self.scale_factor);
+                    aabbs.push(aabb);
+                    //aabbs.push(aabb.clone());
+
+                    let plane = Plane::new(&a, &b, &c); 
+                    planes.push(plane);
+                }
+                
+                // for i in 0..triangles.len() {
+                //     aabb.push(BBox::new(
+                // }
+            }
+            VertexType::vvvv() => {
+                let modulo = (vertex_list.len() + 1) % 4;
+                if modulo != 0 { panic!("initialize_from_triangle_list. vvvv: triangle_list % 4 == {}", modulo) }
+                unimplemented!()
+            }
+            VertexType::vvvnnn() => {
+                let modulo = (vertex_list.len() + 1) % 6;
+                if modulo != 0 { panic!("initialize_from_triangle_list. vvvnnn: triangle_list % 6 == {}", modulo) }
+                unimplemented!()
+            }
+            VertexType::vvvvnnnn() => {
+                let modulo = (vertex_list.len() + 1) % 8;
+                if modulo != 0 { panic!("initialize_from_triangle_list. vvvnnn: triangle_list % 8 == {}", modulo) }
+                unimplemented!()
+            }
+        }
+        let mut tr: Vec<f32> = Vec::new();
+        let mut bb: Vec<f32> = Vec::new();
+        for i in 0..triangles.len() {
+            tr.extend(&triangles[i].to_f32_vec(&VertexType::vvvvnnnn()));
+        }
+        for i in 0..aabbs.len() {
+            bb.extend(&aabbs[i].to_lines());
+            let (mut q,mut w,mut e) = self.get_index_ranges_aabb(&aabbs[i]);
+            // println!("pahhaaa");
+            // println!("{} {} {}", q.start, w.start, e.start);
+            // println!("{} {} {}", q.end, w.end, e.end);
+            for x in q.start..q.end {
+                for y in w.start..w.end {
+                    for z in e.start..e.end {
+                        // println!("pyhyy");
+                        // let coords = self.get_cell_coordinates(x, y, z); //i: u32, j: u32, k: u32)
+                        // println!("({}, {}, {})", coords.x, coords.y, coords.z);
+                        // let (i, j, k) = self.get_cell_indices_wc(&Vector3::<f32>::new(coords.x, coords.y, coords.z)).unwrap();
+                        // println!("({}, {}, {})", i, j, k);
+                        // self.set_cell(i, j, k, &Cell::Known(1.0));
+                    }
+                }
+            }
+            let (q,w,e) = self.get_index_ranges_aabb(&aabbs[i]);
+        }
+        (tr, bb, planes)
+        // let triangles =   
     }
 } // DomainE impl
 
@@ -418,24 +676,24 @@ pub fn heap_test() {
     }
 }
 
-pub fn aabb(a: &Vector4<f32>, b: &Vector4<f32>, c: &Vector4<f32>) {
-
-    let mut min_x = a.x;
-    let mut min_y = a.y;
-    let mut min_z = a.z;
-    let mut max_x = a.x;
-    let mut max_y = a.y;
-    let mut max_z = a.z;
-
-   if b.x < min_x { min_x = b.x } 
-   if b.y < min_y { min_y = b.y } 
-   if b.z < min_z { min_z = b.z } 
-
-   if c.x < min_x { min_x = c.x } 
-   if c.y < min_y { min_y = c.y } 
-   if c.z < min_z { min_z = c.z } 
-
-}
+// pub fn aabb(a: &Vector4<f32>, b: &Vector4<f32>, c: &Vector4<f32>) {
+// 
+//     let mut min_x = a.x;
+//     let mut min_y = a.y;
+//     let mut min_z = a.z;
+//     let mut max_x = a.x;
+//     let mut max_y = a.y;
+//     let mut max_z = a.z;
+// 
+//    if b.x < min_x { min_x = b.x } 
+//    if b.y < min_y { min_y = b.y } 
+//    if b.z < min_z { min_z = b.z } 
+// 
+//    if c.x < min_x { min_x = c.x } 
+//    if c.y < min_y { min_y = c.y } 
+//    if c.z < min_z { min_z = c.z } 
+// 
+// }
 
 //fn get_cell(i: u32, j: u32, k: u32, domain: &DomainE) -> Result<Cell, String> {
 //    let index = (i + j * boundary_width + k * boundary_width * boundary_height) as usize;

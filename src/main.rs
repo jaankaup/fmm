@@ -17,6 +17,9 @@ use fmm::marching_cubes::*;
 use fmm::app_resources::*;
 use fmm::fast_marching::*;
 use fmm::bvh::*;
+use fmm::fmm::*;
+//use crate::misc::VertexType;
+//use crate::bvh::{Triangle, BBox, Plane}; 
 
 use winit::{
     event::{Event, WindowEvent,KeyboardInput,ElementState,VirtualKeyCode},
@@ -32,8 +35,6 @@ enum Example {
     Cube,
     Mc,
     VolumetricNoise,
-    Volumetric3dTexture,
-    Hilbert2d,
     FmmGhostPoints,
     CellPoints,
 }
@@ -54,22 +55,10 @@ struct Buffers {
     mc_output_buffer: BufferInfo,
     ray_march_output_buffer: BufferInfo,
     ray_debug_buffer: BufferInfo,
-    sphere_tracer_output_buffer: BufferInfo,
-    noise_3d_output_buffer: BufferInfo,
-    hilbert_2d: BufferInfo,
     fmm_points: BufferInfo,
     fmm_cell_points: BufferInfo,
     fmm_boundary_lines: BufferInfo,
 }
-
-// Noise 3d resolution.
-static N_3D_RES: (u32, u32, u32) = (128,128,128);
-
-// TODO: is noise_3d_output_buffer necessery? Why not save noise directly to noise3d texture
-// (storage texture). 
-
-// TODO: create a simple way to disable unwanted textures and buffers. Maybe each resource could be
-// released and recreated based on the program state. 
 
 // Size in bytes.
 static BUFFERS:  Buffers = Buffers {
@@ -80,9 +69,6 @@ static BUFFERS:  Buffers = Buffers {
     mc_output_buffer:            BufferInfo { name: "mc_output_buffer",          size: Some(64*64*64*24), },
     ray_march_output_buffer:     BufferInfo { name: "ray_march_output",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4),},
     ray_debug_buffer:            BufferInfo { name: "ray_debug_buffer",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4 * 4),},
-    sphere_tracer_output_buffer: BufferInfo { name: "sphere_tracer_output",      size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 12 * 4),},
-    noise_3d_output_buffer:      BufferInfo { name: "noise_3d_output_buffer",    size: Some(N_3D_RES.0 * N_3D_RES.1 * N_3D_RES.2 * 4),},
-    hilbert_2d:                  BufferInfo { name: "hilbert_2d",                size: None,},
     fmm_points:                  BufferInfo { name: "fmm_points",                size: None,},
     fmm_cell_points:             BufferInfo { name: "fmm_cell_points",           size: None,},
     fmm_boundary_lines:             BufferInfo { name: "fmm_boundary_lines",           size: None,},
@@ -226,11 +212,6 @@ struct ComputePipelineInfo {
     bind_groups: Vec<Vec<BindGroupInfo>>,
 }
 
-// static TWO_TRIANGLES_SHADERS: [ShaderModuleInfo; 2]  = [
-//     ShaderModuleInfo {name: "two_triangles_vert", source_file: "two_triangles_vert.spv", stage: "vertex"},
-//     ShaderModuleInfo {name: "two_triangles_frag", source_file: "two_triangles_frag.spv", stage: "frag"},
-// ];
-
 static VTN_SHADERS: [ShaderModuleInfo; 2]  = [
     ShaderModuleInfo {name: "vtn_render_vert", source_file: "vtn_render_vert.spv", _stage: "vertex"},
     ShaderModuleInfo {name: "vtn_render_frag", source_file: "vtn_render_frag.spv", _stage: "frag"},
@@ -244,6 +225,11 @@ static MC_RENDER_SHADERS: [ShaderModuleInfo; 2]  = [
 static LINE_SHADERS: [ShaderModuleInfo; 2]  = [
     ShaderModuleInfo {name: "line_vert", source_file: "line_vert.spv", _stage: "vertex"},
     ShaderModuleInfo {name: "line_frag", source_file: "line_frag.spv", _stage: "frag"},
+];
+
+static LINE_SHADERS_VVVC_NNNN: [ShaderModuleInfo; 2]  = [
+    ShaderModuleInfo {name: "cube_instanced_vert", source_file: "cube_instanced.vert.spv", _stage: "vertex"},
+    ShaderModuleInfo {name: "cube_instanced_frag", source_file: "cube_instanced.frag.spv", _stage: "frag"},
 ];
 
 static LINE_SHADERS_4PX: [ShaderModuleInfo; 2]  = [
@@ -296,7 +282,9 @@ fn multisampled(sample_count: u32) -> bool {
     match sample_count { 1 => false, 2 => true, 4 => true, 8 => true, 16 => true, _ => panic!("Illegal sample count {}.", sample_count) }
 }
 
-fn create_two_triangles_info(sample_count: u32) -> RenderPipelineInfo { 
+// Create a pipeline and binding groups for shader that renders a given texture to the screen.
+// Should be used with two_triangles buffer. 
+fn create_two_triangles_info(texture_name: &'static str, sample_count: u32) -> RenderPipelineInfo { 
     let two_triangles_info: RenderPipelineInfo = RenderPipelineInfo {
         vertex_shader: ShaderModuleInfo {
             name: "two_triangles_vert",
@@ -313,7 +301,7 @@ fn create_two_triangles_info(sample_count: u32) -> RenderPipelineInfo {
                     BindGroupInfo {
                         binding: 0,
                         visibility: wgpu::ShaderStage::FRAGMENT,
-                        resource: Resource::TextureView(TEXTURES.grass.name),
+                        resource: Resource::TextureView(texture_name),
                         binding_type: wgpu::BindingType::SampledTexture {
                            multisampled: multisampled(sample_count),
                            component_type: wgpu::TextureComponentType::Float,
@@ -323,7 +311,7 @@ fn create_two_triangles_info(sample_count: u32) -> RenderPipelineInfo {
                     BindGroupInfo {
                         binding: 1,
                         visibility: wgpu::ShaderStage::FRAGMENT,
-                        resource: Resource::TextureSampler(TEXTURES.grass.name),
+                        resource: Resource::TextureSampler(texture_name),
                         binding_type: wgpu::BindingType::Sampler {
                            comparison: false,
                         },
@@ -335,20 +323,20 @@ fn create_two_triangles_info(sample_count: u32) -> RenderPipelineInfo {
             (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64)
         ],
     };
-
     two_triangles_info
 }
 
-fn line_info(_sample_count: u32) -> RenderPipelineInfo { 
+// Creates a pipeline and bindgroup infos for a shader that has a camera uniform and a float4 input..
+fn vvvv_camera_info(camera_uniform: &'static str, vertex_shader_name: &'static str, fragment_shader_name: &'static str, _sample_count: u32) -> RenderPipelineInfo { 
     let line_info: RenderPipelineInfo = RenderPipelineInfo {
         vertex_shader: ShaderModuleInfo {
-            name: LINE_SHADERS[0].name,
-            source_file: LINE_SHADERS[0].source_file,
+            name: vertex_shader_name, //LINE_SHADERS[0].name,
+            source_file: "todo", // LINE_SHADERS[0].source_file,
             _stage: "vertex"
         }, 
         fragment_shader: Some(ShaderModuleInfo {
-            name: LINE_SHADERS[1].name,
-            source_file: LINE_SHADERS[1].source_file,
+            name: fragment_shader_name, //LINE_SHADERS[1].name,
+            source_file: "todo", //LINE_SHADERS[1].source_file,
             _stage: "frag"
         }), 
         bind_groups: vec![
@@ -356,7 +344,7 @@ fn line_info(_sample_count: u32) -> RenderPipelineInfo {
                    BindGroupInfo {
                             binding: 0,
                             visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                            resource: Resource::Buffer(BUFFERS.camera_uniform_buffer.name),
+                            resource: Resource::Buffer(camera_uniform),
                             binding_type: wgpu::BindingType::UniformBuffer {
                                dynamic: false,
                                min_binding_size: None,
@@ -365,6 +353,56 @@ fn line_info(_sample_count: u32) -> RenderPipelineInfo {
                ],
         ],
         input_formats: vec![
+            (wgpu::VertexFormat::Float3, 3 * std::mem::size_of::<f32>() as u64),
+            (wgpu::VertexFormat::Uint, std::mem::size_of::<u32>() as u64),
+        ],
+    };
+
+    line_info
+}
+
+fn vvvc_nnnn_camera_info(camera_uniform: &'static str,
+                         // instanced_buffer_name: &'static str,
+                         vertex_shader_name: &'static str,
+                         fragment_shader_name: &'static str,
+                         _sample_count: u32) -> RenderPipelineInfo { 
+    let line_info: RenderPipelineInfo = RenderPipelineInfo {
+        vertex_shader: ShaderModuleInfo {
+            name: vertex_shader_name,
+            source_file: "todo",
+            _stage: "vertex"
+        }, 
+        fragment_shader: Some(ShaderModuleInfo {
+            name: fragment_shader_name,
+            source_file: "todo",
+            _stage: "frag"
+        }), 
+        bind_groups: vec![
+               vec![
+                   BindGroupInfo {
+                            binding: 0,
+                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+                            resource: Resource::Buffer(camera_uniform),
+                            binding_type: wgpu::BindingType::UniformBuffer {
+                               dynamic: false,
+                               min_binding_size: None,
+                            },
+                   }, 
+//                   BindGroupInfo {
+//                            binding: 1,
+//                            visibility: wgpu::ShaderStage::COMPUTE,
+//                            resource: Resource::Buffer(instanced_buffer_name),
+//                            binding_type: wgpu::BindingType::StorageBuffer {
+//                               dynamic: false,
+//                               readonly: false,
+//                               min_binding_size: None,
+//                            },
+//                   }, 
+               ],
+        ],
+        input_formats: vec![
+            (wgpu::VertexFormat::Float3, 3 * std::mem::size_of::<f32>() as u64),
+            (wgpu::VertexFormat::Uint, std::mem::size_of::<u32>() as u64),
             (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
         ],
     };
@@ -372,49 +410,17 @@ fn line_info(_sample_count: u32) -> RenderPipelineInfo {
     line_info
 }
 
-fn line_info_4px(_sample_count: u32) -> RenderPipelineInfo {
-    let line_4px_info: RenderPipelineInfo = RenderPipelineInfo {
-        vertex_shader: ShaderModuleInfo {
-            name: LINE_SHADERS_4PX[0].name,
-            source_file: LINE_SHADERS_4PX[0].source_file,
-            _stage: "vertex"
-        }, 
-        fragment_shader: Some(ShaderModuleInfo {
-            name: LINE_SHADERS_4PX[1].name,
-            source_file: LINE_SHADERS_4PX[1].source_file,
-            _stage: "frag"
-        }), 
-        bind_groups: vec![
-               vec![
-                   BindGroupInfo {
-                            binding: 0,
-                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                            resource: Resource::Buffer(BUFFERS.camera_uniform_buffer.name),
-                            binding_type: wgpu::BindingType::UniformBuffer {
-                               dynamic: false,
-                               min_binding_size: None,
-                            },
-                   }, 
-               ],
-        ],
-        input_formats: vec![
-            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
-        ],
-    };
-
-    line_4px_info
-}
-
-fn line_vn_info(_sample_count: u32) -> RenderPipelineInfo { 
+// Creates a pipeline and bindgroup infos for a shader that has a camera uniform and a float4, float4 input..
+fn v4_v4_camera_info(camera_uniform: &'static str, vertex_shader_name: &'static str, fragment_shader_name: &'static str, _sample_count: u32) -> RenderPipelineInfo { 
     let line_info_vn: RenderPipelineInfo = RenderPipelineInfo {
         vertex_shader: ShaderModuleInfo {
-            name: LINE_SHADERS_VN[0].name,
-            source_file: LINE_SHADERS_VN[0].source_file,
+            name: vertex_shader_name,
+            source_file: "todo", //LINE_SHADERS_VN[0].source_file,
             _stage: "vertex"
         }, 
         fragment_shader: Some(ShaderModuleInfo {
-            name: LINE_SHADERS_VN[1].name,
-            source_file: LINE_SHADERS_VN[1].source_file,
+            name: fragment_shader_name, //LINE_SHADERS_VN[1].name,
+            source_file: "todo",
             _stage: "frag"
         }), 
         bind_groups: vec![
@@ -422,7 +428,7 @@ fn line_vn_info(_sample_count: u32) -> RenderPipelineInfo {
                    BindGroupInfo {
                             binding: 0,
                             visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                            resource: Resource::Buffer(BUFFERS.camera_uniform_buffer.name),
+                            resource: Resource::Buffer(camera_uniform),
                             binding_type: wgpu::BindingType::UniformBuffer {
                                dynamic: false,
                                min_binding_size: None,
@@ -515,7 +521,6 @@ fn ray_renderer_info(sample_count: u32) -> RenderPipelineInfo {
                         resource: Resource::TextureView(TEXTURES.ray_texture.name),
                         binding_type: wgpu::BindingType::SampledTexture {
                            multisampled: multisampled(sample_count),
-                           //component_type: wgpu::TextureComponentType::Uint,
                            component_type: wgpu::TextureComponentType::Float,
                            dimension: wgpu::TextureViewDimension::D2,
                         },
@@ -732,142 +737,6 @@ fn ray_march_info(sample_count: u32) -> ComputePipelineInfo {
     ray_march_info
 }
 
-fn sphere_tracer_info(sample_count: u32) -> ComputePipelineInfo {
-   let sphere_tracer_info: ComputePipelineInfo = ComputePipelineInfo {
-       compute_shader: ShaderModuleInfo {
-           name: SPHERE_TRACER_SHADER.name,
-           source_file: SPHERE_TRACER_SHADER.source_file,
-           _stage: "compute"
-       }, 
-       bind_groups:
-           vec![ 
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::Buffer(BUFFERS.ray_camera_uniform_buffer.name),
-                        binding_type: wgpu::BindingType::UniformBuffer {
-                           dynamic: false,
-                           min_binding_size: None,
-                        },
-                   },
-               ],
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::TextureView(TEXTURES.grass.name),
-                        binding_type: wgpu::BindingType::SampledTexture {
-                           multisampled: multisampled(sample_count),
-                           component_type: wgpu::TextureComponentType::Float,
-                           dimension: wgpu::TextureViewDimension::D2,
-                        },
-                   },
-                   BindGroupInfo {
-                       binding: 1,
-                       visibility: wgpu::ShaderStage::COMPUTE,
-                       resource: Resource::TextureSampler(TEXTURES.grass.name),
-                       binding_type: wgpu::BindingType::Sampler {
-                          comparison: false,
-                       },
-                   },
-                   BindGroupInfo {
-                        binding: 2,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::TextureView(TEXTURES.rock.name),
-                        binding_type: wgpu::BindingType::SampledTexture {
-                           multisampled: multisampled(sample_count),
-                           component_type: wgpu::TextureComponentType::Float,
-                           dimension: wgpu::TextureViewDimension::D2,
-                        },
-                   },
-                   BindGroupInfo {
-                       binding: 3,
-                       visibility: wgpu::ShaderStage::COMPUTE,
-                       resource: Resource::TextureSampler(TEXTURES.rock.name),
-                       binding_type: wgpu::BindingType::Sampler {
-                          comparison: false,
-                       },
-                   },
-                   BindGroupInfo {
-                        binding: 4,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::TextureView(TEXTURES.noise3d.name), // TODO: create texture.
-                        binding_type: wgpu::BindingType::SampledTexture {
-                           multisampled: false,
-                           component_type: wgpu::TextureComponentType::Float,
-                           dimension: wgpu::TextureViewDimension::D3,
-                        },
-                   },
-                   BindGroupInfo {
-                       binding: 5,
-                       visibility: wgpu::ShaderStage::COMPUTE,
-                       resource: Resource::TextureSampler(TEXTURES.noise3d.name),
-                       binding_type: wgpu::BindingType::Sampler {
-                          comparison: false,
-                       },
-                   },
-               ],
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::Buffer(BUFFERS.sphere_tracer_output_buffer.name),
-                        binding_type: wgpu::BindingType::StorageBuffer {
-                           dynamic: false,
-                           readonly: false,
-                           min_binding_size: wgpu::BufferSize::new(BUFFERS.sphere_tracer_output_buffer.size.unwrap().into()),
-                        },
-                   },
-               ],
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::Buffer(BUFFERS.ray_march_output_buffer.name),
-                        binding_type: wgpu::BindingType::StorageBuffer {
-                           dynamic: false,
-                           readonly: false,
-                           min_binding_size: wgpu::BufferSize::new(BUFFERS.ray_march_output_buffer.size.unwrap() as u64 / 4),
-                        },
-                   },
-               ],
-           ],
-    };
-
-    sphere_tracer_info
-}
-
-fn generate_noise3d_info() -> ComputePipelineInfo {
-   let generate_noise3d_info: ComputePipelineInfo = ComputePipelineInfo {
-       compute_shader: ShaderModuleInfo {
-           name: GENERATE_3D_SHADER.name,
-           source_file: GENERATE_3D_SHADER.source_file,
-           _stage: "compute"
-       }, 
-       bind_groups:
-           vec![ 
-               vec![
-                   BindGroupInfo {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        resource: Resource::Buffer(BUFFERS.noise_3d_output_buffer.name),
-                        binding_type: wgpu::BindingType::StorageBuffer {
-                           dynamic: false,
-                           readonly: false,
-                           min_binding_size:
-                                wgpu::BufferSize::new(
-                                    (TEXTURES.noise3d.width.unwrap() * TEXTURES.noise3d.height.unwrap() * TEXTURES.noise3d.depth.unwrap() * 4).into()
-                                ),
-                        },
-                   },
-               ],
-           ],
-    };
-
-    generate_noise3d_info
-}
-
 fn create_render_pipeline_and_bind_groups(device: &wgpu::Device,
                                    sc_desc: &wgpu::SwapChainDescriptor,
                                    shaders: &HashMap<String, wgpu::ShaderModule>,
@@ -940,15 +809,17 @@ fn create_render_pipeline_and_bind_groups(device: &wgpu::Device,
       // Crete vertex attributes.
       let mut stride: u64 = 0;
       let mut vertex_attributes: Vec<wgpu::VertexAttributeDescriptor> = Vec::new();
+      println!("rpi.input.formats.len() == {}", rpi.input_formats.len());
       for i in 0..rpi.input_formats.len() {
           vertex_attributes.push(
               wgpu::VertexAttributeDescriptor {
-                  format: rpi.input_formats[0].0,
+                  format: rpi.input_formats[i].0,
                   offset: stride,
                   shader_location: i as u32,
               }
           );
           stride = stride + rpi.input_formats[i].1;  
+          println!("stride {} :: {}", i, stride);
       }
     
       let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1105,6 +976,7 @@ pub struct App {
     compute_passes: HashMap<String, ComputePass>,
     vertex_buffer_infos: HashMap<String, VertexBufferInfo>,
     fmm_debug_state: Fmm,
+    fmm_domain: FMM_Domain,
 //    pool: ,
 //    spawner: ,
 }
@@ -1128,11 +1000,11 @@ impl App {
         let example = Example::TwoTriangles;
 
         let fmm_debug_state =  Fmm {
-            boundary_points: true,
-            grids: true,
-            cells: true,
-            triangles: true,
-            aabb: true,
+            boundary_points: false,
+            grids: false,
+            cells: false,
+            triangles: false,
+            aabb: false,
         };
 
         // Create the surface, adapter, device and the queue.
@@ -1162,12 +1034,12 @@ impl App {
             up: cgmath::Vector3::unit_y(),
             aspect: sc_desc.width as f32 / sc_desc.height as f32,
             fov: (45.0,45.0).into(),
-            znear: 0.1,
+            znear: 0.01,
             zfar: 1000.0,
         };
 
         // The camera controller.
-        let camera_controller = CameraController::new(0.1,0.1);
+        let camera_controller = CameraController::new(0.01,0.15);
 
         camera.view = Vector3::new(
             camera_controller.pitch.to_radians().cos() * camera_controller.yaw.to_radians().cos(),
@@ -1235,7 +1107,7 @@ impl App {
         /* TWO TRIANGLES */
 
         println!("Creating two_triangles pipeline and bind groups.\n");
-        let two_triangles_info = create_two_triangles_info(sample_count); 
+        let two_triangles_info = create_two_triangles_info(&TEXTURES.rock.name, sample_count); 
         let (two_triangles_bind_groups, two_triangles_render_pipeline) = create_render_pipeline_and_bind_groups(
                         &device,
                         &sc_desc,
@@ -1298,243 +1170,79 @@ impl App {
 
         /************** FAST MARCHING **************/
 
-        println!("\nCreating boundarypoint pipeline and bind groups.\n");
-        let point_info = line_info_4px(sample_count);
-        let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
-                        &device,
-                        &sc_desc,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &point_info,
-                        &wgpu::PrimitiveTopology::PointList,
-                        sample_count);
+        // let mut aabb = BBox::create_from_triangle(&triangle.a, &triangle.b, &triangle.c);
+        // let mut aabb_lines = aabb.to_lines();
+        // aabb.expand_to_nearest_grids(0.1);
 
-        let point_render_pass = RenderPass {
-            pipeline: point_pipeline,
-            bind_groups: point_groups,
-        };
+        // let mut aabb2 = BBox::create_from_triangle(&triangle_2.a, &triangle_2.b, &triangle_2.c);
+        // let mut aabb2_lines = aabb2.to_lines();
+        // aabb2.expand_to_nearest_grids(0.1);
 
-        render_passes.insert("point_render_pass".to_string(), point_render_pass);
+        // let mut aabb_lines_expanded = aabb.to_lines();
+        // aabb_lines_expanded.extend(&aabb2.to_lines());
 
-        println!("\nCreating cellpoint pipeline and bind groups.\n");
-        let cell_point_info = line_vn_info(sample_count);
-        let (cell_point_groups, cell_point_pipeline) = create_render_pipeline_and_bind_groups(
-                        &device,
-                        &sc_desc,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &cell_point_info,
-                        &wgpu::PrimitiveTopology::PointList,
-                        sample_count);
+        // let mut fmm_a_buffer: Vec<f32> = triangle.to_f32_vec(&VertexType::vvvvnnnn()); // Vec::new();
+        // fmm_a_buffer.extend(&triangle_2.to_f32_vec(&VertexType::vvvvnnnn()));
 
-        let cell_point_render_pass = RenderPass {
-            pipeline: cell_point_pipeline,
-            bind_groups: cell_point_groups,
-        };
+        // /* AABB */
 
-        render_passes.insert("cell_point_render_pass".to_string(), cell_point_render_pass);
-        
-        // FAST MARCHING TRIANGLE BUFFER
-        let a = Vector3::<f32>::new(1.5, 1.6, -1.5);
-        let b = Vector3::<f32>::new(1.65, 1.4, -2.3);
-        let c = Vector3::<f32>::new(1.2, 1.1, -0.7);
-        let a_n = (b-a).cross(c-a).normalize();
+        // let (tr, bbox, plane) = domain.initialize_from_triangle_list(&vertex_list_f32, &VertexType::vvv());
 
-        let mut fmm_a_buffer: Vec<f32> = Vec::new();
+        // let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<f32>(
+        //     &device,
+        //     &tr,
+        //     wgpu::BufferUsage::VERTEX,
+        //     None
+        // );
 
-        fmm_a_buffer.push(a.x);
-        fmm_a_buffer.push(a.y);
-        fmm_a_buffer.push(a.z);
-        fmm_a_buffer.push(1.0);
+        // let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
+        //     &device,
+        //     &bbox,
+        //     wgpu::BufferUsage::VERTEX,
+        //     None
+        // );
 
-        fmm_a_buffer.push(a_n.x);
-        fmm_a_buffer.push(a_n.y);
-        fmm_a_buffer.push(a_n.z);
-        fmm_a_buffer.push(0.0);
+        // buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
 
-        fmm_a_buffer.push(b.x);
-        fmm_a_buffer.push(b.y);
-        fmm_a_buffer.push(b.z);
-        fmm_a_buffer.push(1.0);
+        // buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
 
-        fmm_a_buffer.push(a_n.x);
-        fmm_a_buffer.push(a_n.y);
-        fmm_a_buffer.push(a_n.z);
-        fmm_a_buffer.push(0.0);
+        //let fmm_boundary_data = domain.boundary_points_to_vec();
+        //let fmm_cell_data = domain.cells_to_vec();
+        // let boundary_lines = domain.boundary_grid_to_vec();
 
-        fmm_a_buffer.push(c.x);
-        fmm_a_buffer.push(c.y);
-        fmm_a_buffer.push(c.z);
-        fmm_a_buffer.push(1.0);
 
-        fmm_a_buffer.push(a_n.x);
-        fmm_a_buffer.push(a_n.y);
-        fmm_a_buffer.push(a_n.z);
-        fmm_a_buffer.push(0.0);
+        // let aabb_vb_info = VertexBufferInfo {
+        //     vertex_buffer_name: "fmm_aabb_buffer".to_string(),
+        //     _index_buffer: None,
+        //     start_index: 0,
+        //     end_index: aabb_lines_expanded.len() as u32 / 4,
+        //     instances: 1,
+        // };
 
-        let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<f32>(
-            &device,
-            &fmm_a_buffer,
-            wgpu::BufferUsage::VERTEX,
-            None
-        );
+        // vertex_buffer_infos.insert("aabb_vb_info".to_string(), aabb_vb_info);
 
-        buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
+        // /* BOUNDARY POINTS */
 
-        let fmm_triangle_vb_info = VertexBufferInfo {
-            vertex_buffer_name: "fmm_triangle_buffer".to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: fmm_a_buffer.len() as u32 / 8,
-            instances: 1,
-        };
+        // let fmm_boundary_points = Buffer::create_buffer_from_data::<f32>(
+        //     &device,
+        //     &fmm_boundary_data,
+        //     wgpu::BufferUsage::VERTEX,
+        //     None
+        // );
+        // buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_boundary_points);
 
-        vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
 
-        let aabb = BBox::new(&a, &b, &c);
-        let aabb_lines = aabb.to_lines();
+        // let boundary_point_size = domain.boundary_points.points.len() as u32;
 
-        let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
-            &device,
-            &aabb_lines,
-            wgpu::BufferUsage::VERTEX,
-            None
-        );
+        // let fmm_boundary_vb_info = VertexBufferInfo {
+        //     vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
+        //     _index_buffer: None,
+        //     start_index: 0,
+        //     end_index: boundary_point_size,
+        //     instances: 1,
+        // };
 
-        buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
-
-        let mut domain = DomainE::new(1,20,1,20,1,20, 0.1);
-        domain.initialize_boundary(|x, y, z| (x - 1.0).powf(2.0) + (y-1.0).powf(2.0) + (z-1.0).powf(2.0) - 0.1); 
-        //domain.initialize_boundary(|x, y, z| z + 0.5); //
-        let fmm_boundary_data = domain.boundary_points_to_vec();
-        let fmm_cell_data = domain.cells_to_vec();
-        let boundary_lines = domain.boundary_grid_to_vec();
-
-        let boundary_lines_buffer = Buffer::create_buffer_from_data::<f32>(
-            &device,
-            &boundary_lines,
-            wgpu::BufferUsage::VERTEX,
-            None
-        );
-        buffers.insert(BUFFERS.fmm_boundary_lines.name.to_string(), boundary_lines_buffer);
-
-        let aabb_vb_info = VertexBufferInfo {
-            vertex_buffer_name: "fmm_aabb_buffer".to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: aabb_lines.len() as u32 / 4,
-            instances: 1,
-        };
-
-        vertex_buffer_infos.insert("aabb_vb_info".to_string(), aabb_vb_info);
-
-        let fmm_boundary_points = Buffer::create_buffer_from_data::<f32>(
-            &device,
-            &fmm_boundary_data,
-            wgpu::BufferUsage::VERTEX,
-            None
-        );
-        buffers.insert(BUFFERS.fmm_points.name.to_string(), fmm_boundary_points);
-
-        let fmm_cell_points = Buffer::create_buffer_from_data::<f32>(
-            &device,
-            &fmm_cell_data,
-            wgpu::BufferUsage::VERTEX,
-            None
-        );
-
-        buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
-
-        let boundary_point_size = domain.boundary_points.points.len() as u32;
-
-        let fmm_boundary_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.fmm_points.name.to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: boundary_point_size,
-            instances: 1,
-        };
-
-        vertex_buffer_infos.insert("fmm_boundary_vb_info".to_string(), fmm_boundary_vb_info);
-
-        let cell_point_size = domain.cells.len() as u32;
-        println!("CELL POINTS SIZE == {}", cell_point_size);
-
-        let fmm_cell_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.fmm_cell_points.name.to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: cell_point_size,
-            instances: 1,
-        };
-
-        vertex_buffer_infos.insert("fmm_cell_vb_info".to_string(), fmm_cell_vb_info);
-
-        println!("\nCreating boundary lines pipeline and bind groups.\n");
-        let boundary_line_info = line_info(sample_count);
-        let (boundary_line_groups, boundary_line_pipeline) = create_render_pipeline_and_bind_groups(
-                        &device,
-                        &sc_desc,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &boundary_line_info,
-                        &wgpu::PrimitiveTopology::LineList,
-                        sample_count);
-
-        let boundary_line_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.fmm_boundary_lines.name.to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: boundary_lines.len() as u32 / 4,
-            instances: 1,
-        };
-
-        vertex_buffer_infos.insert("boundary_line_vb_info".to_string(), boundary_line_vb_info);
-
-        let boundary_line_render_pass = RenderPass {
-            pipeline: boundary_line_pipeline,
-            bind_groups: boundary_line_groups,
-        };
-
-        render_passes.insert("boundary_line_render_pass".to_string(), boundary_line_render_pass);
-
-        println!("");
-
-        /* LINE (hilbert2d) */
-
-        println!("\nCreating line pipeline and bind groups.\n");
-        let line_info = line_info(sample_count);
-        let (line_groups, line_pipeline) = create_render_pipeline_and_bind_groups(
-                        &device,
-                        &sc_desc,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &line_info,
-                        &wgpu::PrimitiveTopology::LineStrip,
-                        sample_count);
-
-        let line_vb_info = VertexBufferInfo {
-            vertex_buffer_name: BUFFERS.hilbert_2d.name.to_string(),
-            _index_buffer: None,
-            start_index: 0,
-            end_index: 8*8*8,
-            instances: 1,
-        };
-
-        vertex_buffer_infos.insert("line_vb_info".to_string(), line_vb_info);
-
-        let line_render_pass = RenderPass {
-            pipeline: line_pipeline,
-            bind_groups: line_groups,
-        };
-
-        render_passes.insert("line_render_pass".to_string(), line_render_pass);
-
-        println!("");
+        // vertex_buffer_infos.insert("fmm_boundary_vb_info".to_string(), fmm_boundary_vb_info);
 
         /* RAY RENDERER */
 
@@ -1604,8 +1312,8 @@ impl App {
         let mc_compute_pass = ComputePass {
             pipeline: mc_compute_pipeline,
             bind_groups: mc_compute_bind_groups,
-            dispatch_x: 18,
-            dispatch_y: 18,
+            dispatch_x: 8,
+            dispatch_y: 8,
             dispatch_z: 8,
         };
 
@@ -1631,85 +1339,6 @@ impl App {
         };
 
         compute_passes.insert("volume_noise_pass".to_string(), volume_noise_pass);
-        println!("");
-
-        println!("\nCreating volumetric ray caster (3d texture) pipeline and bind groups.\n");
-        let volume_3d_info = sphere_tracer_info(sample_count); // TODO: rename info function.
-        let (volume_3d_bind_groups, volume_3d_compute_pipeline) = create_compute_pipeline_and_bind_groups(
-                        &device,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &volume_3d_info);
-
-        let volume_3d_pass = ComputePass {
-            pipeline: volume_3d_compute_pipeline,
-            bind_groups: volume_3d_bind_groups,
-            dispatch_x: CAMERA_RESOLUTION.0 / 8,
-            dispatch_y: CAMERA_RESOLUTION.1 / 8,
-            dispatch_z: 1,
-        };
-
-        compute_passes.insert("volume_3d_pass".to_string(), volume_3d_pass);
-        println!("");
-
-        println!("\nCreating generate 3d noise pipeline and bind groups.\n");
-        let noise3d_info = generate_noise3d_info();
-        let (noise3d_bind_groups, noise3d_compute_pipeline) = create_compute_pipeline_and_bind_groups(
-                        &device,
-                        &shaders,
-                        &textures,
-                        &buffers,
-                        &noise3d_info);
-
-        let noise_3d_pass = ComputePass {
-            pipeline: noise3d_compute_pipeline,
-            bind_groups: noise3d_bind_groups,
-            dispatch_x: TEXTURES.noise3d.width.unwrap() as u32 / 4,
-            dispatch_y: TEXTURES.noise3d.height.unwrap() as u32 / 4,
-            dispatch_z: TEXTURES.noise3d.depth.unwrap() as u32 / 4,
-        };
-
-        compute_passes.insert("noise_3d_pass".to_string(), noise_3d_pass);
-
-        println!("");
-
-        println!("\nLaunching generate 3d noise.\n");
-
-        let mut noise_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        compute_passes.get("noise_3d_pass")
-                      .unwrap()
-                      .execute(&mut noise_encoder);
-
-        let noise_texture_dimension_x = TEXTURES.noise3d.width.expect("Consider giving TEXTURES.noise3d a width.") as u32;
-        let noise_texture_dimension_y = TEXTURES.noise3d.height.expect("Consider giving TEXTURES.noise3d a height.") as u32;
-        let noise_texture_dimension_z = TEXTURES.noise3d.depth.expect("Consider giving TEXTURES.noise3d a depth.") as u32;
-
-        noise_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &buffers.get(BUFFERS.noise_3d_output_buffer.name).unwrap().buffer,
-                layout: wgpu::TextureDataLayout {
-                    offset: 0,
-                    bytes_per_row: noise_texture_dimension_x * 4, // 16 
-                    rows_per_image: noise_texture_dimension_z,
-                },
-            },
-            wgpu::TextureCopyView{
-                texture: &textures.get(TEXTURES.noise3d.name).unwrap().texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::Extent3d {
-                width: noise_texture_dimension_x,
-                height: noise_texture_dimension_y,
-                depth: noise_texture_dimension_z,
-            });
-
-        queue.submit(Some(noise_encoder.finish()));
-
-        println!("");
-
         println!("\nLaunching marching cubes.\n");
 
         let mut mc_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -1735,6 +1364,337 @@ impl App {
 
         heap_test();
 
+        /////////////////////////////////////////////////////////////////////////
+        ////
+        ////         FMM NEW
+        ////
+        ////////////////////////////////////////////////////////////////////////
+        println!("\nCreating boundarypoint pipeline and bind groups.\n");
+        let point_info = vvvv_camera_info(BUFFERS.camera_uniform_buffer.name, LINE_SHADERS_4PX[0].name, LINE_SHADERS_4PX[1].name, sample_count);
+        let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &point_info,
+                        &wgpu::PrimitiveTopology::PointList,
+                        sample_count);
+
+        let point_render_pass = RenderPass {
+            pipeline: point_pipeline,
+            bind_groups: point_groups,
+        };
+
+        render_passes.insert("point_render_pass".to_string(), point_render_pass);
+        ////let triangle = Triangle {
+        ////    a: Vector3::<f32>::new(1.46, 1.61, 1.59),
+        ////    b: Vector3::<f32>::new(1.66, 1.43, 1.3),
+        ////    c: Vector3::<f32>::new(1.2999, 1.0, 0.9999)
+        ////};
+        ////let triangle_2 = Triangle {
+        ////    a: Vector3::<f32>::new(0.1, 0.1, 0.2),
+        ////    b: Vector3::<f32>::new(0.5, 1.1, 0.5),
+        ////    c: Vector3::<f32>::new(0.3, 0.3, 0.7)
+        ////};
+
+        ////let mut fmm_a_buffer: Vec<f32> = triangle.to_f32_vec(&VertexType::vvvvnnnn()); // Vec::new();
+        ////// fmm_a_buffer.extend(&triangle_2.to_f32_vec(&VertexType::vvvvnnnn()));
+
+        ////// /* AABB */
+
+        ////// let (tr, bbox, plane) = domain.initialize_from_triangle_list(&vertex_list_f32, &VertexType::vvv());
+
+        ////let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<f32>(
+        ////    &device,
+        ////    &fmm_a_buffer,
+        ////    wgpu::BufferUsage::VERTEX,
+        ////    None
+        ////);
+        ////buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
+
+        ////let fmm_triangle_vb_info = VertexBufferInfo {
+        ////    vertex_buffer_name: "fmm_triangle_buffer".to_string(),
+        ////    _index_buffer: None,
+        ////    start_index: 0,
+        ////    end_index: fmm_a_buffer.len() as u32 / 8,
+        ////    instances: 1,
+        ////};
+
+        ////vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
+
+        // let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
+        //     &device,
+        //     &bbox,
+        //     wgpu::BufferUsage::VERTEX,
+        //     None
+        // );
+
+        // buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
+
+        let mut vertex_list_f32: Vec<f32> = Vec::new();
+        vertex_list_f32.push(1.46); vertex_list_f32.push(1.61); vertex_list_f32.push(-1.59);
+        vertex_list_f32.push(1.66); vertex_list_f32.push(1.43); vertex_list_f32.push(-1.3);
+        vertex_list_f32.push(1.2999); vertex_list_f32.push(1.0); vertex_list_f32.push(-0.9999);
+        vertex_list_f32.push(0.1); vertex_list_f32.push(0.1); vertex_list_f32.push(-0.2);
+        vertex_list_f32.push(0.5); vertex_list_f32.push(1.1); vertex_list_f32.push(-0.5);
+        vertex_list_f32.push(0.3); vertex_list_f32.push(0.3); vertex_list_f32.push(-0.7);
+
+        // CREATE DOMAIN 
+
+        let mut fmm_domain = FMM_Domain::new((64, 64, 64), Vector3::<f32>::new(0.0, 0.0, 0.0), 0.05, false);
+        println!("NEW TESTS");
+        // fmm_domain.xyz_to_ijk(&Vector3::<f32>::new(0.05, 0.1, 0.1));
+        // fmm_domain.ijk_to_xyz(1, 0, 0);
+        // fmm_domain.xyz_to_nearest_cell_xyz(&Vector3::<f32>::new(0.05,0.1,0.1));
+        // fmm_domain.xyz_to_all_nearest_ijk(&Vector3::<f32>::new(0.95,0.96,0.96));
+        // fmm_domain.xyz_to_all_nearest_ijk(&Vector3::<f32>::new(0.95,0.96,0.96));
+        // fmm_domain.xyz_to_all_nearest_cells_xyz(&Vector3::<f32>::new(0.95,0.96,0.96)).unwrap();
+
+        //// let fmm_cell_data = fmm_domain.cells_to_vvvc_nnnn();
+        //// let fmm_cell_points = Buffer::create_buffer_from_data::<Vertex_vvvc_nnnn>(
+        ////     &device,
+        ////     &fmm_cell_data,
+        ////     wgpu::BufferUsage::VERTEX,
+        ////     None
+        //// );
+
+        //// buffers.insert(BUFFERS.fmm_cell_points.name.to_string(), fmm_cell_points);
+
+        // Create vvvc_nnnn pipelines and render passes.
+        println!("CREATING CELL CUBES GROUP");
+        let vvvc_nnnn_info = vvvc_nnnn_camera_info(BUFFERS.camera_uniform_buffer.name, LINE_SHADERS_VVVC_NNNN[0].name, LINE_SHADERS_VVVC_NNNN[1].name, sample_count);
+        let (cell_cubes_groups, cell_cubes_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &vvvc_nnnn_info,
+                        &wgpu::PrimitiveTopology::TriangleList,
+                        sample_count);
+
+        let cell_cubes_render_pass = RenderPass {
+            pipeline: cell_cubes_pipeline,
+            bind_groups: cell_cubes_groups,
+        };
+
+        render_passes.insert("cell_cubes_render_pass".to_string(), cell_cubes_render_pass);
+
+        //// let cell_point_size = fmm_cell_data.len() as u32;
+        //// println!("cell_point_size == {}", cell_point_size);
+
+        //// let fmm_cell_vb_info = VertexBufferInfo {
+        ////     vertex_buffer_name: BUFFERS.fmm_cell_points.name.to_string(),
+        ////     _index_buffer: None,
+        ////     start_index: 0,
+        ////     end_index: cell_point_size,
+        ////     instances: 1,
+        //// };
+
+        //// vertex_buffer_infos.insert("fmm_cell_vb_info".to_string(), fmm_cell_vb_info);
+
+        /* BOUNDARY LINES */
+
+        ////let boundary_lines = fmm_domain.boundary_lines();
+
+        ////let boundary_lines_buffer = Buffer::create_buffer_from_data::<Vertex_vvvc>(
+        ////    &device,
+        ////    &boundary_lines,
+        ////    wgpu::BufferUsage::VERTEX,
+        ////    None
+        ////);
+        ////buffers.insert(BUFFERS.fmm_boundary_lines.name.to_string(), boundary_lines_buffer);
+
+
+        let boundary_line_info = vvvv_camera_info(BUFFERS.camera_uniform_buffer.name, LINE_SHADERS[0].name, LINE_SHADERS[1].name, sample_count);
+        let (boundary_line_groups, boundary_line_pipeline) = create_render_pipeline_and_bind_groups(
+                        &device,
+                        &sc_desc,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &boundary_line_info,
+                        &wgpu::PrimitiveTopology::LineList,
+                        sample_count);
+
+        ////println!("boundary lines.len() == {}", boundary_lines.len());
+
+        ////let boundary_line_vb_info = VertexBufferInfo {
+        ////    vertex_buffer_name: BUFFERS.fmm_boundary_lines.name.to_string(),
+        ////    _index_buffer: None,
+        ////    start_index: 0,
+        ////    end_index: boundary_lines.len() as u32,
+        ////    instances: 1,
+        ////};
+
+        let boundary_line_render_pass = RenderPass {
+            pipeline: boundary_line_pipeline,
+            bind_groups: boundary_line_groups,
+        };
+
+        render_passes.insert("boundary_line_render_pass".to_string(), boundary_line_render_pass);
+
+        ////vertex_buffer_infos.insert("boundary_line_vb_info".to_string(), boundary_line_vb_info);
+
+        // The number of marching cubes vertices obtained from mc-algorithm.
+        //let k = &buffers.get(BUFFERS.mc_counter_buffer.name).unwrap().to_vec::<u32>(&device, &queue).await;
+        //let mc_vertex_count = k[0];
+
+        // let marching_cubes_data = &buffers.get(BUFFERS.mc_output_buffer.name).unwrap().to_vec::<Vertex_vvvv_nnnn>(&device, &queue).await;
+        let marching_cubes_data = &buffers.get(BUFFERS.mc_output_buffer.name).unwrap().to_vec::<Vertex_vvvv_nnnn>(&device, &queue).await;
+
+        //for i in 0..mc_vertex_count*8 {
+        //    println!("{}", marching_cubes_data[i as usize]);
+
+        //    // println!("Vertex_vvvv_nnnn [({}, {}, {}, {}), {}, {}, {}, {})].",
+        //    //     mcd.position[0], mcd.position[1], mcd.position[2], mcd.position[3], 
+        //    //     mcd.normal[0], mcd.normal[1], mcd.normal[2], mcd.normal[3]); 
+        //}
+
+        let mut mc_triangle_data: Vec<Triangle> = Vec::new();
+        for i in 0..(mc_vertex_count/3) {
+            let offset = (i*3) as usize;
+            let a = Vector3::<f32>::new(marching_cubes_data[offset].position[0]  , marching_cubes_data[offset].position[1],     marching_cubes_data[offset].position[2]); 
+            let b = Vector3::<f32>::new(marching_cubes_data[offset+1].position[0], marching_cubes_data[offset + 1].position[1], marching_cubes_data[offset + 1].position[2]); 
+            let c = Vector3::<f32>::new(marching_cubes_data[offset+2].position[0], marching_cubes_data[offset + 2].position[1], marching_cubes_data[offset + 2].position[2]); 
+            mc_triangle_data.push(Triangle {a: a, b: b, c: c, });
+        }
+
+        //for tr in mc_triangle_data.iter() {
+        //    println!("Triangle [({}, {}, {}), ({}, {}, {}), ({}, {}, {})].", 
+        //        tr.a.x, tr.a.y, tr.a.z, tr.b.x, tr.b.y, tr.b.z, tr.c.x, tr.c.y, tr.c.z); 
+        //}
+
+        let (cubes, lines) = fmm_domain.add_triangles(&mc_triangle_data);
+
+        // Triangles & lines
+        let nearest_buffer = buffers.get("nearest_point_buffer"); 
+
+        //////let two_triangles = 
+        //////    Buffer::create_buffer_from_data::<f32>(
+        //////    device,
+        //////    // gl_Position     |    point_pos
+        //////    &[-1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
+        //////       1.0, -1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0,
+        //////       1.0,  1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0,
+        //////       1.0,  1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0,
+        //////      -1.0,  1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+        //////      -1.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
+        //////    ],
+        //////    wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_SRC,
+        //////    None
+        //////    );
+
+    //buffers.insert("two_triangles_buffer".to_string(), two_triangles);
+    //    // Nearest point buffer.
+        let nearest_point_buffer = Buffer::create_buffer_from_data::<Vertex_vvvc_nnnn>(
+            &device,
+            &cubes,
+            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            None
+        );
+
+        buffers.insert("nearest_point_buffer".to_string(), nearest_point_buffer);
+
+        let fmm_nearest_point = VertexBufferInfo {
+            vertex_buffer_name: "nearest_point_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: cubes.len() as u32, // CHECK! // closest_data.len() as u32 / 4,
+            instances: 1,
+        };
+        println!("cubes.len() == {}", cubes.len());
+        vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+
+
+        // Line(s) between nearest cell point.
+        let nearest_cell_line = Buffer::create_buffer_from_data::<Vertex_vvvc>(
+            &device,
+            &lines,
+            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            None
+        );
+
+        buffers.insert("nearest_cell_line_buffer".to_string(), nearest_cell_line);
+
+        let fmm_cell_line_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "nearest_cell_line_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: lines.len() as u32,
+            instances: 1,
+        };
+        println!("lines.len() == {}", lines.len());
+        vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_cell_line_vb_info);
+
+        //let triangle = Triangle {
+        //    a: Vector3::<f32>::new(1.46, 1.61, 1.59),
+        //    b: Vector3::<f32>::new(1.66, 1.43, 1.3),
+        //    c: Vector3::<f32>::new(1.2999, 1.0, 0.9999)
+        //};
+        //let cell_color = encode_rgba_u32(100, 180, 88, 255); 
+
+        //let (mut closest_data2, mut closest_line2) = self.fmm_domain.add_triangle(&triangle);
+        //// println!("closest_data2.len() == {}, closest_line2.len() == {}", closest_data2.len(), closest_line2.len());
+
+        //let camera_cell = create_cube_triangles(self.camera.pos + self.camera.view * 0.20, 0.006, cell_color);
+        //closest_data.extend(camera_cell);
+        //closest_data.extend(closest_data2);
+        //closest_line.extend(closest_line2);
+        //// Nearest point buffer.
+        //let nearest_point_buffer = Buffer::create_buffer(
+        //    &self.device,
+        //    (std::mem::size_of::<Vertex_vvvc_nnnn>() * mc_vertex_count * 8 * 4) as u64,
+        //    wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        //    None
+        //);
+
+        //self.buffers.insert("nearest_point_buffer".to_string(), nearest_point_buffer);
+
+        //let fmm_nearest_point = VertexBufferInfo {
+        //    vertex_buffer_name: "nearest_point_buffer".to_string(),
+        //    _index_buffer: None,
+        //    start_index: 0,
+        //    end_index: 0, // closest_data.len() as u32 / 4,
+        //    instances: 1,
+        //};
+        //self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+        //self.queue.write_buffer(
+        //    &buffer.buffer,
+        //    0,
+        //    bytemuck::cast_slice(&closest_data)
+        //    //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
+        //);
+        //self.queue.write_buffer(
+        //    &self.buffers.get("nearest_cell_line_buffer").unwrap().buffer,
+        //    0,
+        //    bytemuck::cast_slice(&closest_line)
+        //    //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
+        //);
+        // println!("closest data len == {}", closest_data.len());
+        
+        // The vertex buffer info for camera cell and closest point cubes.
+        //let fmm_nearest_point = VertexBufferInfo {
+        //    vertex_buffer_name: "nearest_point_buffer".to_string(),
+        //    _index_buffer: None,
+        //    start_index: 0,
+        //    end_index: closest_data.len() as u32,
+        //    instances: 1,
+        //};
+        //self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+
+        //// The vertex buffer info for line between the camera cell and closest point.
+        //let fmm_nearest_cell_line = VertexBufferInfo {
+        //    vertex_buffer_name: "nearest_cell_line_buffer".to_string(),
+        //    _index_buffer: None,
+        //    start_index: 0,
+        //    end_index: closest_line.len() as u32,
+        //    instances: 1,
+        //};
+        //self.vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_nearest_cell_line);
+
+
         Self {
             surface,
             device,
@@ -1759,6 +1719,7 @@ impl App {
             compute_passes,
             vertex_buffer_infos,
             fmm_debug_state,
+            fmm_domain,
         }
     } // new(...
 
@@ -1801,6 +1762,106 @@ impl App {
             bytemuck::cast_slice(&[self.ray_camera_uniform])
         );
 
+        ////let nearest_buffer = self.buffers.get("nearest_point_buffer"); 
+
+        ////// Create neares_point_buffer is it's not created yet.
+        ////match nearest_buffer {
+        ////    None => { 
+
+        ////        // Nearest point buffer.
+        ////        let nearest_point_buffer = Buffer::create_buffer(
+        ////            &self.device,
+        ////            (std::mem::size_of::<Vertex_vvvc_nnnn>() * 3 * 1800) as u64,
+        ////            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        ////            None
+        ////        );
+
+        ////        self.buffers.insert("nearest_point_buffer".to_string(), nearest_point_buffer);
+
+        ////        let fmm_nearest_point = VertexBufferInfo {
+        ////            vertex_buffer_name: "nearest_point_buffer".to_string(),
+        ////            _index_buffer: None,
+        ////            start_index: 0,
+        ////            end_index: 0, // closest_data.len() as u32 / 4,
+        ////            instances: 1,
+        ////        };
+        ////        self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+
+
+        ////        // Line(s) between nearest cell point.
+        ////        let nearest_cell_line = Buffer::create_buffer(
+        ////            &self.device,
+        ////            (std::mem::size_of::<Vertex_vvvc>() * 3 * 1800) as u64,
+        ////            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+        ////            None
+        ////        );
+
+        ////        self.buffers.insert("nearest_cell_line_buffer".to_string(), nearest_cell_line);
+
+        ////        let fmm_cell_line_vb_info = VertexBufferInfo {
+        ////            vertex_buffer_name: "nearest_point_buffer".to_string(),
+        ////            _index_buffer: None,
+        ////            start_index: 0,
+        ////            end_index: 0,
+        ////            instances: 1,
+        ////        };
+        ////        self.vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_cell_line_vb_info);
+        ////    }
+
+        ////    // Update closest cell points and line between them.
+        ////    Some(buffer) => { 
+
+        ////        let triangle = Triangle {
+        ////            a: Vector3::<f32>::new(1.46, 1.61, 1.59),
+        ////            b: Vector3::<f32>::new(1.66, 1.43, 1.3),
+        ////            c: Vector3::<f32>::new(1.2999, 1.0, 0.9999)
+        ////        };
+        ////        let (mut closest_data, mut closest_line) = self.fmm_domain.get_neighbor_grid_points(&(self.camera.pos + self.camera.view * 0.20));
+        ////        // // println!("colusesttt data found!!!!");
+        ////        let cell_color = encode_rgba_u32(100, 180, 88, 255); 
+
+        ////        let (mut closest_data2, mut closest_line2) = self.fmm_domain.add_triangle(&triangle);
+        ////        // println!("closest_data2.len() == {}, closest_line2.len() == {}", closest_data2.len(), closest_line2.len());
+
+        ////        let camera_cell = create_cube_triangles(self.camera.pos + self.camera.view * 0.20, 0.006, cell_color);
+        ////        closest_data.extend(camera_cell);
+        ////        closest_data.extend(closest_data2);
+        ////        closest_line.extend(closest_line2);
+        ////        self.queue.write_buffer(
+        ////            &buffer.buffer,
+        ////            0,
+        ////            bytemuck::cast_slice(&closest_data)
+        ////            //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
+        ////        );
+        ////        self.queue.write_buffer(
+        ////            &self.buffers.get("nearest_cell_line_buffer").unwrap().buffer,
+        ////            0,
+        ////            bytemuck::cast_slice(&closest_line)
+        ////            //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
+        ////        );
+        ////        // println!("closest data len == {}", closest_data.len());
+        ////        
+        ////        // The vertex buffer info for camera cell and closest point cubes.
+        ////        let fmm_nearest_point = VertexBufferInfo {
+        ////            vertex_buffer_name: "nearest_point_buffer".to_string(),
+        ////            _index_buffer: None,
+        ////            start_index: 0,
+        ////            end_index: closest_data.len() as u32,
+        ////            instances: 1,
+        ////        };
+        ////        self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+
+        ////        // The vertex buffer info for line between the camera cell and closest point.
+        ////        let fmm_nearest_cell_line = VertexBufferInfo {
+        ////            vertex_buffer_name: "nearest_cell_line_buffer".to_string(),
+        ////            _index_buffer: None,
+        ////            start_index: 0,
+        ////            end_index: closest_line.len() as u32,
+        ////            instances: 1,
+        ////        };
+        ////        self.vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_nearest_cell_line);
+        ////    }
+        ////}
     }
 
     pub fn render(&mut self, window: &winit::window::Window) {
@@ -1864,33 +1925,6 @@ impl App {
                     });
                 },
 
-                // Launch sprhere tracer.
-                Example::Volumetric3dTexture => {
-
-                    self.compute_passes.get("volume_3d_pass")
-                    .unwrap()
-                    .execute(&mut encoder);
-
-                    encoder.copy_buffer_to_texture(
-                        wgpu::BufferCopyView { 
-                            buffer: &self.buffers.get(BUFFERS.ray_march_output_buffer.name).unwrap().buffer,
-                            layout: wgpu::TextureDataLayout {
-                                offset: 0,
-                                bytes_per_row: CAMERA_RESOLUTION.0 * 4,
-                                rows_per_image: CAMERA_RESOLUTION.1,
-                            },
-                        },
-                        wgpu::TextureCopyView{
-                            texture: &self.textures.get(TEXTURES.ray_texture.name).unwrap().texture,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                        },
-                        wgpu::Extent3d {
-                            width: CAMERA_RESOLUTION.0,
-                            height: CAMERA_RESOLUTION.1,
-                            depth: 1,
-                    });
-                },
                 _ => {}
         }
 
@@ -1928,7 +1962,7 @@ impl App {
 
                     if self.fmm_debug_state.cells == true {
                         let rp_cell = self.vertex_buffer_infos.get("fmm_cell_vb_info").unwrap();
-                        self.render_passes.get("cell_point_render_pass")
+                        self.render_passes.get("cell_cubes_render_pass")
                         .unwrap()
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_cell, self.sample_count, clear);
                         clear = false;
@@ -1941,13 +1975,20 @@ impl App {
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_boundary_lines, self.sample_count, clear);
                         clear = false;
                     }
+                                     
                     if self.fmm_debug_state.triangles == true {
-                        let rp_triangles = self.vertex_buffer_infos.get(&"fmm_triangles_vb_info".to_string()).unwrap();
+                        let rp = self.vertex_buffer_infos.get("mc_renderer_vb_info").unwrap();
                         self.render_passes.get("mc_renderer_pass")
                         .unwrap()
-                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_triangles, self.sample_count, clear);
+                        .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                         clear = false;
+                        // let rp_triangles = self.vertex_buffer_infos.get(&"fmm_triangles_vb_info".to_string()).unwrap();
+                        // self.render_passes.get("mc_renderer_pass")
+                        // .unwrap()
+                        // .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_triangles, self.sample_count, clear);
+                        // clear = false;
                     }
+                                     
                     if self.fmm_debug_state.aabb == true {
                         let rp_aabb = self.vertex_buffer_infos.get(&"aabb_vb_info".to_string()).unwrap();
                         self.render_passes.get("boundary_line_render_pass")
@@ -1955,6 +1996,18 @@ impl App {
                         .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_aabb, self.sample_count, clear);
                         clear = false;
                     }
+
+                    let rp_closest_point = self.vertex_buffer_infos.get(&"fmm_nearest_vb_info".to_string()).unwrap();
+                    self.render_passes.get("cell_cubes_render_pass")
+                    .unwrap()
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_closest_point, self.sample_count, clear);
+                    clear = false;
+
+                    let rp_closest_line = self.vertex_buffer_infos.get(&"fmm_cell_line_vb_info".to_string()).unwrap();
+                    self.render_passes.get("boundary_line_render_pass") 
+                    .unwrap()
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp_closest_line, self.sample_count, clear);
+                    clear = false;
 
                     // All above all disabled. We must draw something or application will crash.
                     // TODO: create some dummy draw prosedure. 
@@ -1977,20 +2030,6 @@ impl App {
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
                 },
-                Example::Volumetric3dTexture => {
-                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info").unwrap();
-                    self.render_passes.get("ray_renderer_pass")
-                    .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
-                },
-                Example::Hilbert2d => {
-                    let rp = self.vertex_buffer_infos.get("line_vb_info").unwrap();
-                    self.render_passes.get("line_render_pass")
-                    .unwrap()
-                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
-                },
-
-                //_ => {},
             }
         }
 
@@ -2101,6 +2140,14 @@ fn create_shaders(device: &wgpu::Device) -> HashMap<String, wgpu::ShaderModule> 
     shaders.insert(RADIX_SHADER.name.to_string(), device.create_shader_module(wgpu::include_spirv!("radix.comp.spv")));
     println!(" ... OK'");
 
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_VVVC_NNNN[0].name, LINE_SHADERS_VVVC_NNNN[0].source_file);
+    shaders.insert(LINE_SHADERS_VVVC_NNNN[0].name.to_string(), device.create_shader_module(wgpu::include_spirv!("cube_instanced.vert.spv")));
+    println!(" ... OK'");
+
+    print!("    * Creating '{}' shader module from file '{}'",LINE_SHADERS_VVVC_NNNN[1].name, LINE_SHADERS_VVVC_NNNN[1].source_file);
+    shaders.insert(LINE_SHADERS_VVVC_NNNN[1].name.to_string(), device.create_shader_module(wgpu::include_spirv!("cube_instanced.frag.spv")));
+    println!(" ... OK'");
+
     println!("\nShader created!\n");
     shaders
 }
@@ -2176,9 +2223,9 @@ fn create_vertex_buffers(device: &wgpu::Device, buffers: &mut HashMap::<String, 
     print!("    * Creating marching cubes uniform buffer as '{}'", BUFFERS.mc_uniform_buffer.name);
 
     let mc_u_data = Mc_uniform_data {
-        base_position: cgmath::Vector4::new(0.0, 0.0, 0.0, 1.0),
+        base_position: cgmath::Vector4::new(1.0, 1.0, 1.0, 1.0),
         isovalue: 0.0,
-        cube_length: 0.15,
+        cube_length: 0.1,
         joopajoo: 0.0,
         joopajoo2: 0.0,
     };
@@ -2218,89 +2265,6 @@ fn create_vertex_buffers(device: &wgpu::Device, buffers: &mut HashMap::<String, 
     buffers.insert(BUFFERS.ray_debug_buffer.name.to_string(), ray_march_debug);
 
     println!(" ... OK'");
-
-    print!("    * Creating sphere_output_buffer buffer as '{}'", BUFFERS.sphere_tracer_output_buffer.name);
-
-    let sphere_output_buffer = Buffer::create_buffer_from_data::<f32>(
-        device,
-        &vec![0 as f32 ; (BUFFERS.sphere_tracer_output_buffer.size.unwrap() / 4) as usize],
-        wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-        None
-    );
-
-    buffers.insert(BUFFERS.sphere_tracer_output_buffer.name.to_string(), sphere_output_buffer);
-    println!(" ... OK'");
-
-    print!("    * Creating noise output buffer as '{}'", BUFFERS.noise_3d_output_buffer.name);
-    let noise_output_buffer = Buffer::create_buffer_from_data::<f32>(
-        device,
-        &vec![0 as f32 ; BUFFERS.noise_3d_output_buffer.size.unwrap() as usize / 4],
-        wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-        None
-    );
-    buffers.insert(BUFFERS.noise_3d_output_buffer.name.to_string(), noise_output_buffer);
-    println!(" ... OK'");
-
-    let mut hilbert: Vec<f32> = Vec::new(); //vec![0 as u32 ; 64*2];
-    //let mut previous: [u32 ; 2] = [0,0];
-    for i in 0..(8*8*8) {
-        //println!("i == {}", i);
-        let inverse = hilbert_index_reverse(3, 3, i);
-        hilbert.push(inverse[0] as f32 * 0.5);
-        hilbert.push(inverse[1] as f32 * 0.5);
-        hilbert.push(inverse[2] as f32 * 0.5);
-        hilbert.push(((8.0*8.0*8.0) - i as f32) / (8.0*8.0*8.0));
-    }
-
-    let hilbert_buffer = Buffer::create_buffer_from_data::<f32>(
-        device,
-        &hilbert,
-        wgpu::BufferUsage::VERTEX,
-        None
-    );
-
-    buffers.insert(BUFFERS.hilbert_2d.name.to_string(), hilbert_buffer);
-
-    println!(" ... OK'");
-
-    //let radix_data_size = 18000;
-    //let mut radix_example_data = vec![0 as u32 ; radix_data_size];
-    //for i in 0..radix_data_size {
-    //    let random_number: u8 = rng.gen(); 
-    //    radix_example_data[i] = (random_number as u32) << 24;
-    //}
-
-    //print!("    * Creating radix_input buffer as '{}'", BUFFERS.radix_input.name);
-    //let radix_initial_data = Buffer::create_buffer_from_data::<u32>(
-    //    device,
-    //    &radix_example_data,
-    //    wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-    //    None
-    //);
-    //buffers.insert(BUFFERS.radix_input.name.to_string(), radix_initial_data);
-    //println!(" ... OK'");
-
-    //// TODO: create not from data
-    //print!("    * Creating radix_auxiliary buffer as '{}'", BUFFERS.radix_auxiliary.name);
-    //let radix_auxiliary = Buffer::create_buffer_from_data::<u32>(
-    //    device,
-    //    &radix_example_data,
-    //    wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-    //    None
-    //);
-    //buffers.insert(BUFFERS.radix_auxiliary.name.to_string(), radix_auxiliary);
-    //println!(" ... OK'");
-
-    //// TODO: create not from data
-    //print!("    * Creating radix_histogram buffer as '{}'", BUFFERS.radix_histogram.name);
-    //let radix_histogram = Buffer::create_buffer_from_data::<u32>(
-    //    device,
-    //    &radix_example_data,
-    //    wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-    //    None
-    //);
-    //buffers.insert(BUFFERS.radix_histogram.name.to_string(), radix_histogram);
-    //println!(" ... OK'");
 
     println!("");
 }
@@ -2467,21 +2431,11 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 virtual_keycode: Some(VirtualKeyCode::Key6),
                                 ..
                             } => state.example = Example::VolumetricNoise,
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Key7),
-                                ..
-                            } => state.example = Example::Volumetric3dTexture,
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Key8),
-                                ..
-                            } => state.example = Example::Hilbert2d,
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::G),
-                                ..
-                            } => state.fmm_debug_state.boundary_points = !state.fmm_debug_state.boundary_points,
+                            // KeyboardInput {
+                            //     state: ElementState::Pressed,
+                            //     virtual_keycode: Some(VirtualKeyCode::G),
+                            //     ..
+                            //} => state.fmm_debug_state.boundary_points = !state.fmm_debug_state.boundary_points,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::L),
@@ -2496,7 +2450,7 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::B),
                                 ..
-                            } => state.fmm_debug_state.aabb = !state.fmm_debug_state.aabb,
+                            } => state.fmm_debug_state.triangles = !state.fmm_debug_state.triangles,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::T),

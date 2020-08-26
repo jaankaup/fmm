@@ -38,8 +38,8 @@ struct Cube {
 // Edge information. 
 const uvec2[12] edge_info = {
 	uvec2(0,1), uvec2(1,2), uvec2(2,3), uvec2(3,0),
-        uvec2(4,5), uvec2(5,6), uvec2(6,7), uvec2(7,4),
-        uvec2(0,4), uvec2(1,5), uvec2(2,6), uvec2(3,7) 
+    uvec2(4,5), uvec2(5,6), uvec2(6,7), uvec2(7,4),
+    uvec2(0,4), uvec2(1,5), uvec2(2,6), uvec2(3,7) 
 };
 
 const uint[1280] triTable = {
@@ -398,11 +398,13 @@ float fbm(vec3 x) {
 
 float calculate_density(vec3 v)
 {
-    //float noise = fbm(v);
-    float noise = noise(v);
+    float noise_a = fbm(v.x * 4.5);
+    float noise_b = noise(v.zyx * 3.8);
     //return v.y + abs(6*fbm(v*0.4)); // + 10.0 * noise + 14.0 * noise2;
-    return v.y - 3.0 +  4 * noise;
-    //return pow(v.x, 2.0) + pow(v.y, 2.0) + pow(v.z, 2.0) - 0.25;
+    //return v.y - 3.0 +  4 * noise;
+    float ball = pow(v.x - 2.1, 2.0) + pow(v.y - 2.2, 2.0) + pow(v.z - 1.5, 2.0) - 2.5;
+    float something = 1.5 * noise_a - 8.45 * noise_b - 8.5 * sin(v.z * 2.2);
+    return v.y + ball - 0.22 * something;
     //return v.y -0.5 + 0.5 * sin(v.x*3);
     //return v.y + cos(10.0 * v.y);
 }
@@ -411,14 +413,32 @@ uint calculate_case(in Cube cube, float isovalue)
 {
   uint result = 0;
 
-  if (cube.vertices[7].w < isovalue) { result += 128;}
-  if (cube.vertices[6].w < isovalue) { result += 64;}
-  if (cube.vertices[5].w < isovalue) { result += 32;}
-  if (cube.vertices[4].w < isovalue) { result += 16;}
-  if (cube.vertices[3].w < isovalue) { result += 8; }
-  if (cube.vertices[2].w < isovalue) { result += 4; }
-  if (cube.vertices[1].w < isovalue) { result += 2; }
-  if (cube.vertices[0].w < isovalue) { result += 1; }
+  result |= uint(cube.vertices[7].w < isovalue) << 7;
+  result |= uint(cube.vertices[6].w < isovalue) << 6;
+  result |= uint(cube.vertices[5].w < isovalue) << 5;
+  result |= uint(cube.vertices[4].w < isovalue) << 4;
+  result |= uint(cube.vertices[3].w < isovalue) << 3;
+  result |= uint(cube.vertices[2].w < isovalue) << 2;
+  result |= uint(cube.vertices[1].w < isovalue) << 1;
+  result |= uint(cube.vertices[0].w < isovalue);
+
+  // if (cube.vertices[7].w < isovalue) { result |= 0x80;}
+  // if (cube.vertices[6].w < isovalue) { result |= 0x40;}
+  // if (cube.vertices[5].w < isovalue) { result |= 0x20;}
+  // if (cube.vertices[4].w < isovalue) { result |= 0x10;}
+  // if (cube.vertices[3].w < isovalue) { result |= 0x8; }
+  // if (cube.vertices[2].w < isovalue) { result |= 0x4; }
+  // if (cube.vertices[1].w < isovalue) { result |= 0x2; }
+  // if (cube.vertices[0].w < isovalue) { result |= 0x1; }
+
+  // if (cube.vertices[0].w < isovalue) { result += 128;}
+  // if (cube.vertices[1].w < isovalue) { result += 64;}
+  // if (cube.vertices[2].w < isovalue) { result += 32;}
+  // if (cube.vertices[3].w < isovalue) { result += 16;}
+  // if (cube.vertices[4].w < isovalue) { result += 8; }
+  // if (cube.vertices[5].w < isovalue) { result += 4; }
+  // if (cube.vertices[6].w < isovalue) { result += 2; }
+  // if (cube.vertices[7].w < isovalue) { result += 1; }
 
   return result;
 }
@@ -460,6 +480,9 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
        p.y = va.y + mu * (vb.y - va.y);
        p.z = va.z + mu * (vb.z - va.z);
        p.w = 1.0;
+       // if (isinf(p.x) || isnan(p.x)) p.x = 66.0;
+       // if (isinf(p.y) || isnan(p.y)) p.y = 55.0;
+       // if (isinf(p.z) || isnan(p.z)) p.z = 44.0;
        return p;
      }
    #else
@@ -472,14 +495,18 @@ vec4 interpolateV(vec4 va, vec4 vb, float isovalue)
        else if (abs(va.w-vb.w) < 0.0001) {
           return vec4(va.xyz, 1.0);
        }
-       vec4 p;
-       float iso = (va.w + vb.w) * 0.5;
-       float mu = (iso - va.w) / (vb.w - va.w);
-       p.x = va.x + mu * (vb.x - va.x);
-       p.y = va.y + mu * (vb.y - va.y);
-       p.z = va.z + mu * (vb.z - va.z);
-       p.w = 1.0;
-       return p;
+       return vec4(va.xyz, 1.0);
+       //vec4 p;
+       //float iso = (va.w + vb.w) * 0.5;
+       //float mu = (iso - va.w) / (vb.w - va.w);
+       //p.x = va.x + mu * (vb.x - va.x);
+       //p.y = va.y + mu * (vb.y - va.y);
+       //p.z = va.z + mu * (vb.z - va.z);
+       //if (isinf(p.x) || isnan(p.x)) p.x = 66.0;
+       //if (isinf(p.y) || isnan(p.y)) p.y = 55.0;
+       //if (isinf(p.z) || isnan(p.z)) p.z = 44.0;
+       //p.w = 1.0;
+       //return p;
        //return vec4((va.xyz + vb.xyz) * 0.5, 1.0);
    #endif
 }
@@ -488,10 +515,10 @@ vec4 interpolateN(vec4 na, vec4 nb, float densityA, float densityB, float isoval
 {
    #ifdef INTERPOLATE
      if (abs(isovalue - densityA) < 0.00001) {
-	 return vec4(normalize(na.xyz), 0.0);
-      }
+	    return vec4(normalize(na.xyz), 0.0);
+    }
      else if (abs(isovalue - densityB) < 0.00001) {
-	 return vec4(normalize(nb.xyz), 0.0);
+	    return vec4(normalize(nb.xyz), 0.0);
      }
      else if (abs(densityA-densityB) < 0.00001) {
          return vec4(normalize(na.xyz), 0.0);
@@ -521,7 +548,7 @@ vec4 interpolateN(vec4 na, vec4 nb, float densityA, float densityB, float isoval
 
 void createVertex(uint edgeValue,
 	          in Cube cube,
-                  uint arrayIndex)
+              uint arrayIndex)
 {
 
     uvec2 edge = edge_info[edgeValue];
@@ -543,14 +570,23 @@ void main() {
     vec3 position = vec3(pos_x, pos_y, pos_z) * cube_length;
 
     // Create cube corner coordinates. 
-    vec3 p0 = position + vec3(0.0           , 0.0           , cube_length);
-    vec3 p1 = position + vec3(0.0           , cube_length   , cube_length);
-    vec3 p2 = position + vec3(cube_length   , cube_length   , cube_length);
-    vec3 p3 = position + vec3(cube_length   , 0.0           , cube_length);
-    vec3 p4 = position;
-    vec3 p5 = position + vec3(0.0           , cube_length   , 0.0);
-    vec3 p6 = position + vec3(cube_length   , cube_length   , 0.0);
-    vec3 p7 = position + vec3(cube_length   , 0.0           , 0.0);
+    vec3 p0 = position;
+    vec3 p3 = position + vec3(0.0           , cube_length   , 0.0);
+    vec3 p2 = position + vec3(cube_length   , cube_length   , 0.0);
+    vec3 p1 = position + vec3(cube_length   , 0.0           , 0.0);
+    vec3 p4 = position + vec3(0.0           , 0.0           , cube_length);
+    vec3 p7 = position + vec3(0.0           , cube_length   , cube_length);
+    vec3 p6 = position + vec3(cube_length   , cube_length   , cube_length);
+    vec3 p5 = position + vec3(cube_length   , 0.0           , cube_length);
+
+    // vec3 p0 = position;
+    // vec3 p1 = position + vec3(0.0           , cube_length   , 0.0);
+    // vec3 p2 = position + vec3(cube_length   , cube_length   , 0.0);
+    // vec3 p3 = position + vec3(cube_length   , 0.0           , 0.0);
+    // vec3 p4 = position + vec3(0.0           , 0.0           , cube_length);
+    // vec3 p5 = position + vec3(0.0           , cube_length   , cube_length);
+    // vec3 p6 = position + vec3(cube_length   , cube_length   , cube_length);
+    // vec3 p7 = position + vec3(cube_length   , 0.0           , cube_length);
 
     // Create the cube.
     Cube cube;
@@ -564,6 +600,15 @@ void main() {
     cube.vertices[5] = vec4(p5, calculate_density(p5));
     cube.vertices[6] = vec4(p6, calculate_density(p6));
     cube.vertices[7] = vec4(p7, calculate_density(p7));
+
+    //cube.vertices[0] = vec4(p0, calculate_density(p0));
+    //cube.vertices[1] = vec4(p1, calculate_density(p1));
+    //cube.vertices[2] = vec4(p2, calculate_density(p2));
+    //cube.vertices[3] = vec4(p3, calculate_density(p3));
+    //cube.vertices[4] = vec4(p4, calculate_density(p4));
+    //cube.vertices[5] = vec4(p5, calculate_density(p5));
+    //cube.vertices[6] = vec4(p6, calculate_density(p6));
+    //cube.vertices[7] = vec4(p7, calculate_density(p7));
 
     // Calculate the cube case number.
     uint cube_case = calculate_case(cube, isovalue);
@@ -588,7 +633,7 @@ void main() {
 
         uint base_index = triTable[cube_case * OFFSET + i];
 
-        if (base_index != 255) { 
+        if (base_index != 16777215) { 
 
             uint index = atomicAdd(counter, 3);
             createVertex((base_index & 0xff0000) >> 16, cube, index);

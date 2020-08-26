@@ -61,6 +61,7 @@ impl Buffer {
     /// Method for copying the content of the buffer into a vector.
     pub async fn to_vec<T: Convert2Vec>(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<T> {
 
+        println!("self.capacity as u64 == {}", self.capacity);
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: self.capacity as u64, 
@@ -83,6 +84,39 @@ impl Buffer {
         buffer_future.await.expect("failed"); 
         let data = buffer_slice.get_mapped_range();
         res = Convert2Vec::convert(&data);
+
+        //
+        drop(data);
+        staging_buffer.unmap();
+        //
         res
     }
+
+    // pub async fn to_array<T: Pod>(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<T> {
+
+    //     let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: None,
+    //         size: self.capacity as u64, 
+    //         usage: wgpu::BufferUsage::MAP_READ | wgpu::BufferUsage::COPY_DST,
+    //         mapped_at_creation: false,
+    //     });
+
+    //     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+    //     encoder.copy_buffer_to_buffer(&self.buffer, 0, &staging_buffer, 0, self.capacity as wgpu::BufferAddress);
+    //     queue.submit(Some(encoder.finish()));
+
+    //     let buffer_slice = staging_buffer.slice(..);
+    //     let buffer_future = buffer_slice.map_async(wgpu::MapMode::Read);
+    //     device.poll(wgpu::Maintain::Wait);
+
+    //     buffer_future.await.expect("failed"); 
+    //     let data = buffer_slice.get_mapped_range();
+    //     // let data2 = bytemuck::cast_slice::<u8, T>(&data);
+    //     // drop(data);
+    //     // staging_buffer.unmap();
+    //     // data2
+    //     let yeah: Vec<T> = bytemuck::cast_slice::<u8, T>(&data).iter().collect();
+    //     yeah
+    // }
 }
