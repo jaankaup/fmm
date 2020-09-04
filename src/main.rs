@@ -1472,13 +1472,12 @@ impl App {
 
         println!("k[0] == {}", k[0]);
 
-        FmmDomain::heap_test();
-
         /////////////////////////////////////////////////////////////////////////
         ////
         ////         FMM NEW
         ////
         ////////////////////////////////////////////////////////////////////////
+
         println!("\nCreating boundarypoint pipeline and bind groups.\n");
         let point_info = vvvv_camera_info(BUFFERS.camera_uniform_buffer.name, LINE_SHADERS_4PX[0].name, LINE_SHADERS_4PX[1].name, sample_count);
         let (point_groups, point_pipeline) = create_render_pipeline_and_bind_groups(
