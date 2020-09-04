@@ -4,10 +4,9 @@ use std::borrow::Cow::Borrowed;
 //use futures::executor::LocalPool;
 //use futures::executor::LocalSpawner;
 use std::collections::HashMap;
-use rand::prelude::*;
+//use rand::prelude::*;
 use std::time::{SystemTime, UNIX_EPOCH};
-use jaankaup_hilbert::hilbert::hilbert_index_reverse;
-use cgmath::{prelude::*, Vector3, Vector4};
+use cgmath::{prelude::*, Vector3};
 use fmm::misc::*;
 use fmm::buffer::*;
 use fmm::texture::*;
@@ -16,7 +15,7 @@ use fmm::camera::*;
 use fmm::marching_cubes::*;
 //use fmm::radix_sort::*;
 use fmm::app_resources::*;
-use fmm::fast_marching::*;
+//use fmm::fast_marching::*;
 use fmm::bvh::*;
 use fmm::fmm::*;
 //use crate::misc::VertexType;
@@ -38,6 +37,7 @@ enum Example {
     VolumetricNoise,
     FmmGhostPoints,
     CellPoints,
+    SphereTracer,
 }
 
 struct Fmm {
@@ -56,9 +56,10 @@ struct Buffers {
     mc_output_buffer: BufferInfo,
     ray_march_output_buffer: BufferInfo,
     ray_debug_buffer: BufferInfo,
-    fmm_points: BufferInfo,
-    fmm_cell_points: BufferInfo,
-    fmm_boundary_lines: BufferInfo,
+    //fmm_distance_field: BufferInfo,
+    //fmm_points: BufferInfo,
+    //fmm_cell_points: BufferInfo,
+    //fmm_boundary_lines: BufferInfo,
 }
 
 // Size in bytes.
@@ -70,9 +71,10 @@ static BUFFERS:  Buffers = Buffers {
     mc_output_buffer:            BufferInfo { name: "mc_output_buffer",          size: Some(64*64*64*24), },
     ray_march_output_buffer:     BufferInfo { name: "ray_march_output",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4),},
     ray_debug_buffer:            BufferInfo { name: "ray_debug_buffer",          size: Some(CAMERA_RESOLUTION.0 as u32 * CAMERA_RESOLUTION.1 as u32 * 4 * 4),},
-    fmm_points:                  BufferInfo { name: "fmm_points",                size: None,},
-    fmm_cell_points:             BufferInfo { name: "fmm_cell_points",           size: None,},
-    fmm_boundary_lines:             BufferInfo { name: "fmm_boundary_lines",           size: None,},
+    //fmm_distance_field:          BufferInfo { name: "fmm_distance_field",        size: Some(40 * 40 * 40 * 4 * 4),},
+    //fmm_points:                  BufferInfo { name: "fmm_points",                size: None,},
+    //fmm_cell_points:             BufferInfo { name: "fmm_cell_points",           size: None,},
+    //fmm_boundary_lines:             BufferInfo { name: "fmm_boundary_lines",           size: None,},
 };
 
 #[derive(Clone, Copy)]
@@ -411,39 +413,145 @@ fn vvvc_nnnn_camera_info(camera_uniform: &'static str,
     line_info
 }
 
-// Creates a pipeline and bindgroup infos for a shader that has a camera uniform and a float4, float4 input..
-fn v4_v4_camera_info(camera_uniform: &'static str, vertex_shader_name: &'static str, fragment_shader_name: &'static str, _sample_count: u32) -> RenderPipelineInfo { 
-    let line_info_vn: RenderPipelineInfo = RenderPipelineInfo {
-        vertex_shader: ShaderModuleInfo {
-            name: vertex_shader_name,
-            source_file: "todo", //LINE_SHADERS_VN[0].source_file,
-            _stage: "vertex"
-        }, 
-        fragment_shader: Some(ShaderModuleInfo {
-            name: fragment_shader_name, //LINE_SHADERS_VN[1].name,
-            source_file: "todo",
-            _stage: "frag"
-        }), 
-        bind_groups: vec![
+//// Creates a pipeline and bindgroup infos for a shader that has a camera uniform and a float4, float4 input..
+//fn v4_v4_camera_info(camera_uniform: &'static str, vertex_shader_name: &'static str, fragment_shader_name: &'static str, _sample_count: u32) -> RenderPipelineInfo { 
+//    let line_info_vn: RenderPipelineInfo = RenderPipelineInfo {
+//        vertex_shader: ShaderModuleInfo {
+//            name: vertex_shader_name,
+//            source_file: "todo", //LINE_SHADERS_VN[0].source_file,
+//            _stage: "vertex"
+//        }, 
+//        fragment_shader: Some(ShaderModuleInfo {
+//            name: fragment_shader_name, //LINE_SHADERS_VN[1].name,
+//            source_file: "todo",
+//            _stage: "frag"
+//        }), 
+//        bind_groups: vec![
+//               vec![
+//                   BindGroupInfo {
+//                            binding: 0,
+//                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
+//                            resource: Resource::Buffer(camera_uniform),
+//                            binding_type: wgpu::BindingType::UniformBuffer {
+//                               dynamic: false,
+//                               min_binding_size: None,
+//                            },
+//                   }, 
+//               ],
+//        ],
+//        input_formats: vec![
+//            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
+//            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64)
+//        ],
+//    };
+//
+//    line_info_vn
+//}
+//
+fn sphere_tracer_info(sample_count: u32) -> ComputePipelineInfo {
+   let sphere_tracer_info: ComputePipelineInfo = ComputePipelineInfo {
+       compute_shader: ShaderModuleInfo {
+           name: SPHERE_TRACER_SHADER.name,
+           source_file: SPHERE_TRACER_SHADER.source_file,
+           _stage: "compute"
+       }, 
+       bind_groups:
+           vec![ 
                vec![
                    BindGroupInfo {
-                            binding: 0,
-                            visibility: wgpu::ShaderStage::VERTEX | wgpu::ShaderStage::FRAGMENT,
-                            resource: Resource::Buffer(camera_uniform),
-                            binding_type: wgpu::BindingType::UniformBuffer {
-                               dynamic: false,
-                               min_binding_size: None,
-                            },
-                   }, 
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        resource: Resource::Buffer(BUFFERS.ray_camera_uniform_buffer.name),
+                        binding_type: wgpu::BindingType::UniformBuffer {
+                           dynamic: false,
+                           min_binding_size: None,
+                        },
+                   },
                ],
-        ],
-        input_formats: vec![
-            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64),
-            (wgpu::VertexFormat::Float4, 4 * std::mem::size_of::<f32>() as u64)
-        ],
+               vec![
+                   BindGroupInfo {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        resource: Resource::TextureView(TEXTURES.grass.name),
+                        binding_type: wgpu::BindingType::SampledTexture {
+                           multisampled: multisampled(sample_count),
+                           component_type: wgpu::TextureComponentType::Float,
+                           dimension: wgpu::TextureViewDimension::D2,
+                        },
+                   },
+                   BindGroupInfo {
+                       binding: 1,
+                       visibility: wgpu::ShaderStage::COMPUTE,
+                       resource: Resource::TextureSampler(TEXTURES.grass.name),
+                       binding_type: wgpu::BindingType::Sampler {
+                          comparison: false,
+                       },
+                   },
+                   BindGroupInfo {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        resource: Resource::TextureView(TEXTURES.rock.name),
+                        binding_type: wgpu::BindingType::SampledTexture {
+                           multisampled: multisampled(sample_count),
+                           component_type: wgpu::TextureComponentType::Float,
+                           dimension: wgpu::TextureViewDimension::D2,
+                        },
+                   },
+                   BindGroupInfo {
+                       binding: 3,
+                       visibility: wgpu::ShaderStage::COMPUTE,
+                       resource: Resource::TextureSampler(TEXTURES.rock.name),
+                       binding_type: wgpu::BindingType::Sampler {
+                          comparison: false,
+                       },
+                   },
+                   BindGroupInfo {
+                        binding: 4,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        resource: Resource::TextureView(TEXTURES.fmm_distance.name), // TODO: create texture.
+                        binding_type: wgpu::BindingType::SampledTexture {
+                           multisampled: false,
+                           component_type: wgpu::TextureComponentType::Float,
+                           dimension: wgpu::TextureViewDimension::D3,
+                        },
+                   },
+                   BindGroupInfo {
+                       binding: 5,
+                       visibility: wgpu::ShaderStage::COMPUTE,
+                       resource: Resource::TextureSampler(TEXTURES.fmm_distance.name),
+                       binding_type: wgpu::BindingType::Sampler {
+                          comparison: false,
+                       },
+                   },
+               ],
+//               vec![
+//                   BindGroupInfo {
+//                        binding: 0,
+//                        visibility: wgpu::ShaderStage::COMPUTE,
+//                        resource: Resource::Buffer(BUFFERS.sphere_tracer_output_buffer.name),
+//                        binding_type: wgpu::BindingType::StorageBuffer {
+//                           dynamic: false,
+//                           readonly: false,
+//                           min_binding_size: wgpu::BufferSize::new(BUFFERS.sphere_tracer_output_buffer.size.unwrap().into()),
+//                        },
+//                   },
+//               ],
+               vec![
+                   BindGroupInfo {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        resource: Resource::Buffer(BUFFERS.ray_march_output_buffer.name),
+                        binding_type: wgpu::BindingType::StorageBuffer {
+                           dynamic: false,
+                           readonly: false,
+                           min_binding_size: wgpu::BufferSize::new(BUFFERS.ray_march_output_buffer.size.unwrap() as u64 / 4),
+                        },
+                   },
+               ],
+           ],
     };
 
-    line_info_vn
+    sphere_tracer_info
 }
 
 fn vtn_renderer_info(sample_count: u32) -> RenderPipelineInfo { 
@@ -977,7 +1085,7 @@ pub struct App {
     compute_passes: HashMap<String, ComputePass>,
     vertex_buffer_infos: HashMap<String, VertexBufferInfo>,
     fmm_debug_state: Fmm,
-    fmm_domain: FMM_Domain,
+    fmm_domain: FmmDomain,
 //    pool: ,
 //    spawner: ,
 }
@@ -1020,6 +1128,7 @@ impl App {
         // Storage for textures. It is important to load textures before creating bind groups.
         let mut textures = HashMap::new();
         create_textures(&device, &queue, &sc_desc, &mut textures, sample_count); 
+        //create_3d_texture_from_data(&device, &queue, &sc_desc, &mut textures, sample_count); 
 
         // Create shaders.
         let shaders = create_shaders(&device);
@@ -1040,7 +1149,7 @@ impl App {
         };
 
         // The camera controller.
-        let camera_controller = CameraController::new(0.01,0.15);
+        let camera_controller = CameraController::new(0.1,0.5);
 
         camera.view = Vector3::new(
             camera_controller.pitch.to_radians().cos() * camera_controller.yaw.to_radians().cos(),
@@ -1363,7 +1472,7 @@ impl App {
 
         println!("k[0] == {}", k[0]);
 
-        heap_test();
+        FmmDomain::heap_test();
 
         /////////////////////////////////////////////////////////////////////////
         ////
@@ -1389,52 +1498,44 @@ impl App {
 
         render_passes.insert("point_render_pass".to_string(), point_render_pass);
 
-        ////// /* AABB */
-
-        ////// let (tr, bbox, plane) = domain.initialize_from_triangle_list(&vertex_list_f32, &VertexType::vvv());
-
-
-        ////vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
-
-        // let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
-        //     &device,
-        //     &bbox,
-        //     wgpu::BufferUsage::VERTEX,
-        //     None
-        // );
-
-        // buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
 
         // CREATE DOMAIN 
 
-        let (mut mc_triangle_data, aabb): (Vec<Triangle>, BBox) = load_triangles_from_obj("bunny.obj").unwrap();
-        let length = aabb.min.distance(aabb.max);
+        // Load triangle mesh.
+        //let (mc_triangle_data, aabb): (Vec<Triangle>, BBox) = load_triangles_from_obj("rock2.obj").unwrap();
+        let (mc_triangle_data, aabb): (Vec<Triangle>, BBox) = load_triangles_from_obj("wood.obj").unwrap();
+
+        println!("mc_triangle_data.len() == {}", mc_triangle_data.len());
+
+        // Calculate scene boundaries using the information gained from triangle mesh aabb.
         let mut scene_aabb = BBox { min: Vector3::<f32>::new(0.0, 0.0, 0.0), max: Vector3::<f32>::new(0.0, 0.0, 0.0), }; 
-        scene_aabb.expand(&(aabb.min - Vector3::<f32>::new(aabb.min.x.abs(), aabb.min.y.abs(), aabb.min.z.abs())));
-        scene_aabb.expand(&(aabb.max + Vector3::<f32>::new(aabb.max.x.abs(), aabb.max.y.abs(), aabb.max.z.abs())));
+        scene_aabb.expand(&(aabb.min - Vector3::<f32>::new(aabb.min.x.abs(), aabb.min.y.abs(), aabb.min.z.abs()) * 0.2));
+        scene_aabb.expand(&(aabb.max + Vector3::<f32>::new(aabb.max.x.abs(), aabb.max.y.abs(), aabb.max.z.abs()) * 0.2));
+
         let base_position = scene_aabb.min;
         let grid_length_x = (scene_aabb.min.x - scene_aabb.max.x).abs();
         let grid_length_y = (scene_aabb.min.y - scene_aabb.max.y).abs();
         let grid_length_z = (scene_aabb.min.z - scene_aabb.max.z).abs();
-        let grid_length = grid_length_x.max(grid_length_y).max(grid_length_z) / 80.0;
+        let grid_length = grid_length_x.max(grid_length_y).max(grid_length_z) / 60.0;
 
         // BUNNY
         
         let mut bunny_data: Vec<Vertex_vvvv_nnnn> = Vec::new();
         for tr in mc_triangle_data.iter() {
             let normal = (tr.a-tr.b).cross(tr.a-tr.b).normalize(); //ac.cross(ab).normalize();
+            //let normal = (tr.b-tr.a).cross(tr.c-tr.a).normalize(); //ac.cross(ab).normalize();
             let normal_array = [normal.x, normal.y, normal.z, 0.0];
-            let result = Vertex_vvvv_nnnn {
+            let mut result = Vertex_vvvv_nnnn {
                 position: [tr.a.x, tr.a.y, tr.a.z, 1.0],
                 normal: normal_array,
             };
             bunny_data.push(result);
-            let result = Vertex_vvvv_nnnn {
+            result = Vertex_vvvv_nnnn {
                 position: [tr.b.x, tr.b.y, tr.b.z, 1.0],
                 normal: normal_array,
             };
             bunny_data.push(result);
-            let result = Vertex_vvvv_nnnn {
+            result = Vertex_vvvv_nnnn {
                 position: [tr.c.x, tr.c.y, tr.c.z, 1.0],
                 normal: normal_array,
             };
@@ -1443,23 +1544,28 @@ impl App {
         let fast_maching_triangle_buffer = Buffer::create_buffer_from_data::<Vertex_vvvv_nnnn>(
             &device,
             &bunny_data,
+            //bytemuck::cast_slice(&bunny_data),
             wgpu::BufferUsage::VERTEX,
             None
         );
         buffers.insert("fmm_triangle_buffer".to_string(), fast_maching_triangle_buffer);
 
+        println!("bunny_data.len() == {}", bunny_data.len());
+
         let fmm_triangle_vb_info = VertexBufferInfo {
             vertex_buffer_name: "fmm_triangle_buffer".to_string(),
             _index_buffer: None,
             start_index: 0,
+            //end_index: mc_triangle_data.len() as u32,
             end_index: bunny_data.len() as u32,
             instances: 1,
         };
 
         vertex_buffer_infos.insert("fmm_triangles_vb_info".to_string(), fmm_triangle_vb_info);
 
-        let mut fmm_domain = FMM_Domain::new((80, 80, 80), base_position, grid_length, false);
+        let mut fmm_domain = FmmDomain::new((60, 60, 60), base_position, grid_length);
         println!("NEW TESTS");
+        println!("grid_length == {}", grid_length);
 
         // Create vvvc_nnnn pipelines and render passes.
         println!("CREATING CELL CUBES GROUP");
@@ -1532,7 +1638,9 @@ impl App {
         //let mc_vertex_count = k[0];
 
         // let marching_cubes_data = &buffers.get(BUFFERS.mc_output_buffer.name).unwrap().to_vec::<Vertex_vvvv_nnnn>(&device, &queue).await;
-        let marching_cubes_data = &buffers.get(BUFFERS.mc_output_buffer.name).unwrap().to_vec::<Vertex_vvvv_nnnn>(&device, &queue).await;
+
+        // LOAD MC DATA TO BUFFER
+        //let marching_cubes_data = &buffers.get(BUFFERS.mc_output_buffer.name).unwrap().to_vec::<Vertex_vvvv_nnnn>(&device, &queue).await;
 
         //for i in 0..mc_vertex_count*8 {
         //    println!("{}", marching_cubes_data[i as usize]);
@@ -1551,10 +1659,18 @@ impl App {
         ////     mc_triangle_data.push(Triangle {a: a, b: b, c: c, });
         //// }
 
-        let (cubes, lines) = fmm_domain.add_triangles(&mc_triangle_data);
+        fmm_domain.add_triangles(&mc_triangle_data);
+        //fmm_domain.fmm_domain_swap_signs();
+        fmm_domain.fmm_initialize_heap();
+        fmm_domain.fmm_march_narrow_band();
+        fmm_domain.fmm_domain_swap_signs();
+        fmm_domain.fmm_initialize_heap();
+        fmm_domain.fmm_march_narrow_band();
+        fmm_domain.fmm_domain_swap_signs();
+        let (cubes, lines) = fmm_domain.create_grid_point_and_line_data(true, true, false, true);
 
         // Triangles & lines
-        let nearest_buffer = buffers.get("nearest_point_buffer"); 
+        //let nearest_buffer = buffers.get("nearest_point_buffer"); 
 
         //////let two_triangles = 
         //////    Buffer::create_buffer_from_data::<f32>(
@@ -1571,7 +1687,6 @@ impl App {
         //////    None
         //////    );
 
-    //buffers.insert("two_triangles_buffer".to_string(), two_triangles);
     //    // Nearest point buffer.
         let nearest_point_buffer = Buffer::create_buffer_from_data::<Vertex_vvvc_nnnn>(
             &device,
@@ -1610,75 +1725,81 @@ impl App {
             end_index: lines.len() as u32,
             instances: 1,
         };
-        println!("lines.len() == {}", lines.len());
         vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_cell_line_vb_info);
 
-        //let triangle = Triangle {
-        //    a: Vector3::<f32>::new(1.46, 1.61, 1.59),
-        //    b: Vector3::<f32>::new(1.66, 1.43, 1.3),
-        //    c: Vector3::<f32>::new(1.2999, 1.0, 0.9999)
-        //};
-        //let cell_color = encode_rgba_u32(100, 180, 88, 255); 
+        ////// /* AABB */
 
-        //let (mut closest_data2, mut closest_line2) = self.fmm_domain.add_triangle(&triangle);
-        //// println!("closest_data2.len() == {}, closest_line2.len() == {}", closest_data2.len(), closest_line2.len());
+        let aabb_data = fmm_domain.create_triangle_aabb();
 
-        //let camera_cell = create_cube_triangles(self.camera.pos + self.camera.view * 0.20, 0.006, cell_color);
-        //closest_data.extend(camera_cell);
-        //closest_data.extend(closest_data2);
-        //closest_line.extend(closest_line2);
-        //// Nearest point buffer.
-        //let nearest_point_buffer = Buffer::create_buffer(
-        //    &self.device,
-        //    (std::mem::size_of::<Vertex_vvvc_nnnn>() * mc_vertex_count * 8 * 4) as u64,
-        //    wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        //    None
-        //);
+        let fast_maching_aabb = Buffer::create_buffer_from_data::<f32>(
+            &device,
+            &aabb_data,
+            wgpu::BufferUsage::VERTEX,
+            None
+        );
 
-        //self.buffers.insert("nearest_point_buffer".to_string(), nearest_point_buffer);
+        buffers.insert("fmm_aabb_buffer".to_string(), fast_maching_aabb);
 
-        //let fmm_nearest_point = VertexBufferInfo {
-        //    vertex_buffer_name: "nearest_point_buffer".to_string(),
-        //    _index_buffer: None,
-        //    start_index: 0,
-        //    end_index: 0, // closest_data.len() as u32 / 4,
-        //    instances: 1,
-        //};
-        //self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
-        //self.queue.write_buffer(
-        //    &buffer.buffer,
-        //    0,
-        //    bytemuck::cast_slice(&closest_data)
-        //    //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
-        //);
-        //self.queue.write_buffer(
-        //    &self.buffers.get("nearest_cell_line_buffer").unwrap().buffer,
-        //    0,
-        //    bytemuck::cast_slice(&closest_line)
-        //    //unsafe {std::slice::from_raw_parts(closest_data.as_ptr() as *const _, closest_data.len() * std::mem::size_of::<Vertex_vvvc_nnnn>()) },
-        //);
-        // println!("closest data len == {}", closest_data.len());
+        let aabb_vb_info = VertexBufferInfo {
+            vertex_buffer_name: "fmm_aabb_buffer".to_string(),
+            _index_buffer: None,
+            start_index: 0,
+            end_index: aabb_data.len() as u32 / 4,
+            instances: 1,
+        };
+
+        vertex_buffer_infos.insert("aabb_vb_info".to_string(), aabb_vb_info);
+
+        //println!("array_index_test:: ({}, {}, {}) == ({}, {}, {}) == {}", koord.0, koord.1, koord.2, koord_reverse.0, koord_reverse.1, koord_reverse.2, koord == koord_reverse); 
+
+        // Create the distance field data.
+        let mut distance_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let fmm_distance_data = fmm_domain.fmm_data_to_f32();
+        //let fmm_distance_data: Vec<f32> = Vec::new();
+        //let fmm_distance_data = vec![0.0 ; 0];
+        println!("fmm_distance_data.len() == {}", fmm_distance_data.len());
         
-        // The vertex buffer info for camera cell and closest point cubes.
-        //let fmm_nearest_point = VertexBufferInfo {
-        //    vertex_buffer_name: "nearest_point_buffer".to_string(),
-        //    _index_buffer: None,
-        //    start_index: 0,
-        //    end_index: closest_data.len() as u32,
-        //    instances: 1,
-        //};
-        //self.vertex_buffer_infos.insert("fmm_nearest_vb_info".to_string(), fmm_nearest_point);
+        let slice = unsafe {std::slice::from_raw_parts(fmm_distance_data.as_ptr() as *const u8, fmm_distance_data.len() * 4)};
+        println!("slice.len() == {}", slice.len());
+        queue.write_texture(
+            wgpu::TextureCopyView{
+                texture: &textures.get(TEXTURES.fmm_distance.name).unwrap().texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            bytemuck::cast_slice(&fmm_distance_data),
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 60 * 16,
+                rows_per_image: 60,
+            },
+            wgpu::Extent3d {
+                width: 60,
+                height: 60,
+                depth: 60,
+            });
+              
+        queue.submit(Some(distance_encoder.finish()));
 
-        //// The vertex buffer info for line between the camera cell and closest point.
-        //let fmm_nearest_cell_line = VertexBufferInfo {
-        //    vertex_buffer_name: "nearest_cell_line_buffer".to_string(),
-        //    _index_buffer: None,
-        //    start_index: 0,
-        //    end_index: closest_line.len() as u32,
-        //    instances: 1,
-        //};
-        //self.vertex_buffer_infos.insert("fmm_cell_line_vb_info".to_string(), fmm_nearest_cell_line);
+        println!("\nCreating sphere tracer (distance field) pipeline and bind groups.\n");
+        let volume_3d_info = sphere_tracer_info(sample_count); // TODO: rename info function.
+        let (volume_3d_bind_groups, volume_3d_compute_pipeline) = create_compute_pipeline_and_bind_groups(
+                        &device,
+                        &shaders,
+                        &textures,
+                        &buffers,
+                        &volume_3d_info);
 
+        let volume_3d_pass = ComputePass {
+            pipeline: volume_3d_compute_pipeline,
+            bind_groups: volume_3d_bind_groups,
+            dispatch_x: CAMERA_RESOLUTION.0 / 8,
+            dispatch_y: CAMERA_RESOLUTION.1 / 8,
+            dispatch_z: 1,
+        };
+
+        compute_passes.insert("volume_3d_pass".to_string(), volume_3d_pass);
+        println!("");
 
         Self {
             surface,
@@ -1909,6 +2030,32 @@ impl App {
                             depth: 1,
                     });
                 },
+                Example::SphereTracer => {
+
+                    self.compute_passes.get("volume_3d_pass")
+                    .unwrap()
+                    .execute(&mut encoder);
+
+                    encoder.copy_buffer_to_texture(
+                        wgpu::BufferCopyView {
+                            buffer: &self.buffers.get(BUFFERS.ray_march_output_buffer.name).unwrap().buffer,
+                            layout: wgpu::TextureDataLayout {
+                                offset: 0,
+                                bytes_per_row: CAMERA_RESOLUTION.0 * 4,
+                                rows_per_image: CAMERA_RESOLUTION.1,
+                            },
+                        },
+                        wgpu::TextureCopyView{
+                            texture: &self.textures.get(TEXTURES.ray_texture.name).unwrap().texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                        },
+                        wgpu::Extent3d {
+                            width: CAMERA_RESOLUTION.0,
+                            height: CAMERA_RESOLUTION.1,
+                            depth: 1,
+                    });
+                },
 
                 _ => {}
         }
@@ -2011,6 +2158,12 @@ impl App {
                 },
                 Example::VolumetricNoise => {
                     let rp = self.vertex_buffer_infos.get("two_triangles_vb_info").unwrap();
+                    self.render_passes.get("ray_renderer_pass")
+                    .unwrap()
+                    .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
+                },
+                Example::SphereTracer => {
+                    let rp = self.vertex_buffer_infos.get("two_triangles_vb_info") .unwrap();
                     self.render_passes.get("ray_renderer_pass")
                     .unwrap()
                     .execute(&mut encoder, &frame, &self.multisampled_framebuffer, &self.textures, &self.buffers, &rp, self.sample_count, true);
@@ -2416,6 +2569,11 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 virtual_keycode: Some(VirtualKeyCode::Key6),
                                 ..
                             } => state.example = Example::VolumetricNoise,
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Key7),
+                                ..
+                            } => state.example = Example::SphereTracer,
                             // KeyboardInput {
                             //     state: ElementState::Pressed,
                             //     virtual_keycode: Some(VirtualKeyCode::G),
@@ -2435,7 +2593,7 @@ fn run(window: Window, event_loop: EventLoop<()>, mut state: App) {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::B),
                                 ..
-                            } => state.fmm_debug_state.triangles = !state.fmm_debug_state.triangles,
+                            } => state.fmm_debug_state.aabb = !state.fmm_debug_state.aabb,
                             KeyboardInput {
                                 state: ElementState::Pressed,
                                 virtual_keycode: Some(VirtualKeyCode::T),

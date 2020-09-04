@@ -273,7 +273,7 @@ impl Texture {
         });
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: None,
+            label: Some(std::borrow::Cow::Borrowed("fmm_distance_texture")),
             format: *format,// wgpu::TextureFormat::Rgba8UnormSrgb,
             dimension: wgpu::TextureViewDimension::D3,
             aspect: wgpu::TextureAspect::All,

@@ -19,3 +19,4 @@ pub mod heap;
 pub mod bvh;
 pub mod fmm;
 pub mod object_loader;
+pub mod array3D;

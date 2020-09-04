@@ -14,8 +14,8 @@ name = "eikonal_application"
 path = "src/main.rs"
 
 [dependencies]
-#wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "master", features = ["subscriber","trace"]}
-wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "master"}
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "master", features = ["subscriber","trace"]}
+#wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "master"}
 hilbert_project = { git = "https://github.com/jaankaup/Hilbert", branch = "master"}
 winit = { version = "0.22.1", features = ["web-sys"] }
 futures = "0.3"
@@ -34,6 +34,7 @@ rand = { version = "0.7.3", features = ["wasm-bindgen"] }
 #ron = "0.5.1"
 ordered-float = "1.0.1"
 obj-rs = "0.6.1"
+wavefront_obj = "8.0.0"
 
 #[build-dependencies]
 #bindgen = "0.53.1"

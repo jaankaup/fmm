@@ -236,14 +236,15 @@ impl Triangle {
         result
     }
 
-    pub fn distance_to_triangle(&self, p: &Vector3<f32>) -> (f32, bool) {
+    pub fn distance_to_triangle(&self, p: &Vector3<f32>) -> (f32, bool) { // (distance, is_positive)
         // TODO: solve sign of distance.
         // Surface normal ccw.
+        //let normal = (self.b-self.a).cross(self.c-self.a).normalize(); //ac.cross(ab).normalize();
         let normal = (self.b-self.a).cross(self.c-self.a).normalize(); //ac.cross(ab).normalize();
         let point = self.closest_point_to_triangle(&p);
         let dot_p = normal.dot(point - p);
         let sign = { 
-            if dot_p < 0.0 { true } 
+            if dot_p < 0.0 { true } // CHECK THESE 
             else { false }
         };
         //println!("SIGN == {}", sign);
@@ -380,7 +381,7 @@ pub fn barycentric_cooordinates(a: &Vector3<f32>, b: &Vector3<f32>, c: &Vector3<
 //     result
 // }
 
-pub struct Ray {
-    origin: Vector3<f32>,
-    dir: Vector3<f32>,
-}
+// pub struct Ray {
+//     origin: Vector3<f32>,
+//     dir: Vector3<f32>,
+// }

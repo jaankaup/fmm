@@ -3,6 +3,7 @@
 target/
 glslangValidator
 spirv-opt
+trace
 
 output.txt
 '
@@ -10,3 +11,4 @@ output.txt
 *.info
 *.sh
 lib
+*.obj

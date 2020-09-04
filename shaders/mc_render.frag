@@ -15,12 +15,12 @@ layout(set = 1, binding = 1) uniform sampler s_diffuse1;
 layout(set = 1, binding = 2) uniform texture2D t_diffuse2;
 layout(set = 1, binding = 3) uniform sampler s_diffuse2;
 
-const vec3 light_pos = vec3(3.0, 13.0, 3.0);
+const vec3 light_pos = vec3(3.0, 3.0, 3.0);
 const vec3 light_color = vec3(1.0, 1.0, 1.0);
 const vec3 material_spec_color = vec3(1.0, 1.0, 1.0);
 const float material_shininess = 170.0;
 const float ambient_coeffience = 0.15;
-const float attentuation_factor = 0.0009;
+const float attentuation_factor = 0.009;
 
 void main() {
 
@@ -47,6 +47,8 @@ void main() {
     const vec3 surface_color = mix(
         surfaceColor_rock, surfaceColor_grass,
         clamp(0.4*nor_f.x + 0.6*nor_f.y, 0.0, 1.0));
+
+    //const vec3 surface_color = vec3(0.5, 0.5, 0.75);
 
     //vec3 surface_color = mix(surfaceColor_rock, surfaceColor_grass, clamp(0.4 * nor_f.x + 0.6 * nor_f.y, 0.0, 1.0)); 
 

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub struct Textures {
     pub grass: TextureInfo,
     pub rock: TextureInfo,
-    pub noise3d: TextureInfo,
+    pub fmm_distance: TextureInfo,
     pub depth: TextureInfo,
     pub ray_texture: TextureInfo,
 }
@@ -27,7 +27,7 @@ static N_3D_RES: (u32, u32, u32) = (128,128,128);
 pub static TEXTURES: Textures = Textures {
     grass:       TextureInfo { name: "GrassTexture",     source: Some("grass2.png"), width: None,                      height: None,                      depth: None, },
     rock:        TextureInfo { name: "rock_texture",     source: Some("rock.png"),   width: None,                      height: None,                      depth: None, },
-    noise3d:     TextureInfo { name: "noise_3d_texture", source: None,               width: Some(N_3D_RES.0),          height: Some(N_3D_RES.1),          depth: Some(N_3D_RES.2), },
+    fmm_distance:TextureInfo { name: "fmm_distance_tex", source: None,               width: Some(60),                  height: Some(60),                  depth: Some(60), },
     depth:       TextureInfo { name: "depth_texture",    source: None,               width: None,                      height: None,                      depth: None, },
     ray_texture: TextureInfo { name: "ray_texture",      source: None,               width: Some(CAMERA_RESOLUTION.0), height: Some(CAMERA_RESOLUTION.1), depth: Some(1), },
 };
@@ -56,14 +56,15 @@ pub fn create_textures(device: &wgpu::Device, queue: &wgpu::Queue, sc_desc: &wgp
     textures.insert(TEXTURES.ray_texture.name.to_string(), ray_texture);
     println!(" ... OK'");
 
-    print!("    * Creating {} texture.", TEXTURES.noise3d.name);
-    let noise3dtexture = Texture::create_texture3d(
+    print!("    * Creating {} texture.", TEXTURES.fmm_distance.name);
+    let fmm_distance_texture = Texture::create_texture3d(
         &device,
-        &sc_desc.format,
-        TEXTURES.noise3d.width.unwrap() as u32,
-        TEXTURES.noise3d.height.unwrap() as u32,
-        TEXTURES.noise3d.depth.unwrap() as u32,
+        //&sc_desc.format,
+        &wgpu::TextureFormat::Rgba32Float,
+        TEXTURES.fmm_distance.width.unwrap() as u32,
+        TEXTURES.fmm_distance.height.unwrap() as u32,
+        TEXTURES.fmm_distance.depth.unwrap() as u32,
     );
-    textures.insert(TEXTURES.noise3d.name.to_string(), noise3dtexture);
+    textures.insert(TEXTURES.fmm_distance.name.to_string(), fmm_distance_texture);
     println!(" ... OK'");
 }
