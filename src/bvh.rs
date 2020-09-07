@@ -255,6 +255,55 @@ impl Triangle {
         // else { result }
     }
 
+    pub fn divide_triangle_to_points(&self, max_n: u32) -> Vec<Vector3<f32>> {
+
+        let epsilon: f32 = 0.3;
+
+        let mut points: Vec<Vector3<f32>> = Vec::new();
+        let ab = self.b - self.a; 
+        let ac = self.c - self.a;
+        let bc = self.c - self.b;
+        // let ab = self.a - self.b; 
+        // let ac = self.a - self.c;
+        // let bc = self.b - self.c;
+
+        let n = ab.cross(ac).normalize(); 
+        let s: f32 = 0.5 as f32 * ab.cross(ac).magnitude(); 
+        
+        let mut n: u32 = (s/epsilon).sqrt().ceil() as u32;
+
+        if n > max_n { n = max_n; } 
+
+        let s1 = 1.0 / (n as f32) * ab;
+        let s2 = 1.0 / (n as f32) * bc;
+        let s3 = 1.0 / (n as f32) * ac;
+
+        let mut ps = 1.0/3.0 * (self.a + ( self.a + s1) + (self.a + s3));
+        points.push(ps.clone());
+        let mut i = 2;
+
+        while i <= n {
+            ps = ps + s1;
+            points.push(ps.clone());
+            let mut p = ps.clone();
+            let mut j = 2;
+
+            while j <= i {
+                p = p + s2;
+                points.push(p.clone());
+                j += 1;
+            }
+            i += 1;
+        }
+
+        println!("Points");
+        for p in points.iter() {
+            println!("Vector {{ x: {}, y: {}, z: {} }}", p.x, p.y, p.z);
+        }
+
+        points
+    }
+
     pub fn to_f32_vec(&self, vt: &VertexType) -> Vec<f32> {
         let mut result: Vec<f32> = Vec::new();
         match vt {

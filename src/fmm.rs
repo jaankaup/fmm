@@ -14,65 +14,20 @@ type MinNonNan = Reverse<NotNan<f32>>;
 
 #[derive(Clone, Copy)]
 pub enum Cell {
-    Known(f32, Vector3<f32>, bool), // (distance, normal_vector, is_plus)
+    Known(f32, Vector3<f32>, bool), // (distance, normal_vector for debuggin reason, is_plus)
     Band(f32, bool, bool ), // (distance, in_heap, is_plus)
-    Far(bool), // in_heap
+    Far(),
 }
-
-//   Initial state
-//  
-//   I :: Surface ( b(x) == 0 )
-//   + :: Ghost point (boundary condition b(x))
-//   F :: Far
-//   K :: Known
-//   base_position :: (0.0, 0.0, 0.0)
-//  
-//                                    w(x) < 0                                           w(x) > 0
-//  
-//    5.5  +---------+---------+---------+---------+---------+---------I---------+---------+---------+---------+--
-//         |         |         |         |         |         |       II|         |         |         |         |       
-//         |         |         |         |         |         |      I  |         |         |         |         |       
-//    5.0  |    F    |    F    |    F    |    F    |    F    |   F I   |    K    |    F    |    F    |    F    |       
-//         |         |         |         |         |         |   II    |         |         |         |         |       
-//         |         |         |         |         |         | II      |         |         |         |         |       
-//    4.5  +---------+---------+---------+---------+---------+I--------+---------+---------+---------+---------+--
-//         |         |         |         |         |         I         |         |         |         |         |       
-//         |         |         |         |         |        I|         |         |         |         |         |       
-//    4.0  |    F    |    F    |    F    |    F    |    F  I |    K    |    F    |    F    |    F    |    F    |       
-//         |         |         |         |         |       I |         |         |         |         |         |       
-//         |         |         |         |         |        I|         |         |         |         |         |       
-//    3.5  +---------+---------+---------+---------+---------I---------+---------+---------+---------+---------+--
-//         |         |         |         |         |         I         |         |         |         |         |       
-//         |         |         |         |         |         |I        |         |         |         |         |       
-//    3.0  |    F    |    F    |    F    |    F    |    F    | I  K    |    F    |    F    |    F    |    F    |       
-//         |         |         |         |         |         |  I      |         |         |         |         |       
-//         |         |         |         |         |         |  I      |         |         |         |         |       
-//    2.5  +---------+---------+---------+---------+---------+--I------+---------+---------+---------+---------+--
-//         |         |         |         |         |         | I       |         |         |         |         |       
-//         |         |         |         |         |         |I        |         |         |         |         |       
-//    2.0  |    F    |    F    |    F    |    F    |    F    I    K    |    F    |    F    |    F    |    F    |       
-//         |         |         |         |         |         I         |         |         |         |         |       
-//         |         |         |         |         |        I|         |         |         |         |         |       
-//    1.5  +---------+---------+---------+---------+-------I-+---------+---------+---------+---------+---------+--
-//         |         |         |         |         |      I  |         |         |         |         |         |       
-//         |         |         |         |         |     I   |         |         |         |         |         |       
-//    1.0  |    F    |    F    |    F    |    F    |  F I    |    K    |    F    |    F    |    F    |    F    |       
-//         |         |         |         |         |    I    |         |         |         |         |         |       
-//         |         |         |         |         |   I     |         |         |         |         |         |       
-//    0.5  +---------+---------+---------+---------+---I-----+---------+---------+---------+---------+---------+--
-//  
-//        0.5  1.0  1.5  2.0  2.5  3.0  3.5  4.0  4.5  5.0  5.5  6.0  6.5  7.0  7.5  8.0  8.5  9.0  9.5  10.0  10.5
-//  
-
 
 /// Data structure for holding the information about the fmm state.
 pub struct FmmDomain {
-    domain: Array3D<Cell>,
+    domain: Array3D<Cell, f32>,
     heap: BinaryHeap<std::cmp::Reverse<(ordered_float::NotNan<f32>, u32)>>,
     aabbs: Vec<BBox>,
     min_value: f32,
     max_value: f32,
-    error_grids: Vec<(CellIndex, Vec<CellIndex>)>, // (error index, chosen neighbor indices)
+    error_grids: Vec<(CellIndex, Vec<CellIndex>)>, // (error index, chosen neighbor indices, for debughing)
+    points: Vec<Vector3<f32>>,
 }
 
 impl FmmDomain {
@@ -80,14 +35,17 @@ impl FmmDomain {
     pub fn new(dimension: (u32, u32, u32), base_position: Vector3<f32>, grid_length: f32) -> Self {
         assert!(grid_length > 0.0, "FmmDomain.new: grid_length {} > 0.0", grid_length);
 
-        let data: Vec<Cell> = vec![Cell::Far(false) ; (dimension.0 * dimension.1 * dimension.2) as usize];
+        let data: Vec<Cell> = vec![Cell::Far() ; (dimension.0 * dimension.1 * dimension.2) as usize];
+        let boundary_data: Vec<f32> = vec![0.0 ; ((dimension.0 + 1) * (dimension.1 + 1) * (dimension.2 + 1)) as usize];
 
-        let mut array: Array3D<Cell> = Array3D::new(
+        let mut array: Array3D<Cell, f32> = Array3D::new(
             (dimension.0, dimension.1, dimension.2),
             Coordinate {x: base_position.x, y: base_position.y, z: base_position.z },
             grid_length);
 
-        array.data = data;
+        // Implement a function for this operation.
+        array.set_data_vec(data);
+        array.set_boundary_vec_data(boundary_data);
 
         // Initialize cell points with far values.
 
@@ -99,6 +57,7 @@ impl FmmDomain {
 
         let min_value = 0.0;
         let max_value = 0.0;
+        let points: Vec<Vector3<f32>> = Vec::new();
 
         Self {
             domain: array,
@@ -107,6 +66,7 @@ impl FmmDomain {
             min_value,
             max_value,
             error_grids,
+            points,
         }
     }
 
@@ -122,7 +82,7 @@ impl FmmDomain {
             let cell_color = match cell {
                 Cell::Known(_,_,_) => { encode_rgba_u32(0, 255, 0, 255) } 
                 Cell::Band(_,_,_)  => { encode_rgba_u32(255, 255, 0, 255) }  
-                Cell::Far(_)    => { encode_rgba_u32(255, 0, 255, 0) }  
+                Cell::Far()    => { encode_rgba_u32(255, 0, 255, 0) }  
             };
             let cell_ws_pos = self.domain.map_ijk_xyz(&CellIndex {i: i, j: j, k: k}).unwrap();
             let cube = create_cube_triangles(Vector3::<f32>::new(cell_ws_pos.x, cell_ws_pos.y, cell_ws_pos.z), 0.004, cell_color);
@@ -212,11 +172,18 @@ impl FmmDomain {
 
         let domain_aabb = self.get_domain_bounding_box();
 
-        //let mut tr_counter = 0;
-        //let mut tr_stop = 1;
+        let mut tr_counter = 0;
+        let mut tr_stop = 1;
+
         for tr in triangles {
-            // if tr_counter == tr_stop { break; }
-            // tr_counter += 1;
+            let temp_points = tr.divide_triangle_to_points(5); 
+            //for ti in temp_points.iter() {
+            self.points.extend(temp_points);
+            //}
+
+            if tr_counter == tr_stop { break; }
+            tr_counter += 1;
+
             // Triangle is inside computational domain.
             if domain_aabb.includes_point(&tr.a, true) && domain_aabb.includes_point(&tr.b, true) && domain_aabb.includes_point(&tr.c, true) {
 
@@ -227,6 +194,8 @@ impl FmmDomain {
 
                 let min_xyz = self.domain.map_ijk_xyz(&CellIndex {i: triangle_bounds.0.start, j: triangle_bounds.1.start, k: triangle_bounds.2.start}).unwrap();
                 let max_xyz = self.domain.map_ijk_xyz(&CellIndex {i: triangle_bounds.0.end, j: triangle_bounds.1.end, k: triangle_bounds.2.end}).unwrap();
+
+                // Extend triangle aabb to the next outer grid points.
                 let aabb_extended_tr = BBox::create_from_line(&Vector3::<f32>::new(min_xyz.x, min_xyz.y, min_xyz.z),
                                                               &Vector3::<f32>::new(max_xyz.x, max_xyz.y, max_xyz.z));
                 self.aabbs.push(aabb_extended_tr);
@@ -236,12 +205,20 @@ impl FmmDomain {
                 for r in triangle_bounds.1.start..triangle_bounds.1.end+1 {
                 for s in triangle_bounds.2.start..triangle_bounds.2.end+1 {
 
+                    // The cell index for the triangle distance calculation.
                     let cell_index = CellIndex { i:q, j:r, k:s };
+
                     let cell_pos = self.domain.map_ijk_xyz(&cell_index).unwrap();
 
+                    // Calculate the distance from cell point to the triangle.
                     let (distance, sign) = tr.distance_to_triangle(&Vector3::<f32>::new(cell_pos.x, cell_pos.y, cell_pos.z));
-                    let signed_distance = match sign { true => distance, false => -distance }; 
+
+                    // The closest point from chosen cell point to the triangle.
                     let triangle_point = tr.closest_point_to_triangle(&Vector3::<f32>::new(cell_pos.x, cell_pos.y, cell_pos.z));
+
+                    // It's now clear how to select the nearest cells. TODO: try the triangle
+                    // subdivision.
+
                     //if distance >= self.domain.grid_length.sqrt() {
                     if distance >= self.domain.grid_length {
                     //if distance > SQ3 * 0.5 * self.domain.grid_length {
@@ -262,7 +239,7 @@ impl FmmDomain {
                             Cell::Band(val,_,_) => {
                                 if distance < val.abs() { cell = Cell::Known(distance, normal, sign); self.domain.set_data(cell_index, cell); new_found = true; } 
                             }
-                            Cell::Far(_) => {
+                            Cell::Far() => {
                                 cell = Cell::Known(distance, normal, sign); self.domain.set_data(cell_index, cell); new_found = true;
                             }
                         }
@@ -314,7 +291,7 @@ impl FmmDomain {
                         grid_cubes.extend(cube);
                     }
                 }
-                Cell::Far(_) => {
+                Cell::Far() => {
                     if show_far {    
                         let grid_pos = self.domain.map_ijk_xyz(&cell_index).unwrap(); 
                         let cell_color = encode_rgba_u32(50, 50, 255, 255); 
@@ -346,6 +323,11 @@ impl FmmDomain {
                 });
             }
 
+        }
+        for point in self.points.iter() {
+            let cell_color = encode_rgba_u32(255, 255, 255, 255); 
+            let cube = create_cube_triangles(*point , 0.138, cell_color);
+            grid_cubes.extend(cube);
         }
         (grid_cubes, lines)
     }
@@ -394,7 +376,7 @@ impl FmmDomain {
         match debug_cell {
             Cell::Known(val, _, is_plus) => { sign = is_plus; /* println!("fmm_update_neigbors {}, {}, {}, {} :: OK", val, i, j, k); */ }
             Cell::Band(_, _, _) => { panic!("fmm_update_neighbors({}, {}, {}) with a band point", i, j, k); }
-            Cell::Far(_) => { panic!("fmm_update_neighbors({}, {}, {}) with a far point", i, j, k); }
+            Cell::Far() => { panic!("fmm_update_neighbors({}, {}, {}) with a far point", i, j, k); }
         }
 
         if sign {
@@ -407,7 +389,7 @@ impl FmmDomain {
                 // If 
                 match cell {
                     // A far point found. Update to band.
-                    Cell::Far(_) => {
+                    Cell::Far() => {
 
                         ////println!("Going to solve quadratic Far CellIndex{{ i: {}, j: {}, k: {} }}", cell_index.i, cell_index.j, cell_index.k);
                         let mut phi_temp = self.fmm_solve_quadratic(cell_index.i, cell_index.j, cell_index.k, 666.0, true);
@@ -883,6 +865,25 @@ impl FmmDomain {
 
     pub fn fmm_data_to_f32(&mut self) -> Vec<f32> {
 
+        // let f = |cell| {
+        //     match cell { 
+        //         Cell::Known(dist, _, sign) => {
+        //             let sign = if sign { 1.0 } else { -1.0 };
+        //             let distance = dist * sign;
+        //             distance
+        //             //if distance < self.min_value {
+        //             //    //println!("Changin min value {} -> {}", self.min_value, distance);
+        //             //    self.min_value = distance;
+        //             //}
+        //             //if distance > self.max_value {
+        //             //    //println!("Changin max value {} -> {}", self.max_value, distance);
+        //             //    self.max_value = distance;
+        //             //}
+        //         }
+        //         _ => { 0.0 }
+        //     }
+        // };
+        //let values = self.domain.data_to_vec(f);
         for cell in self.domain.data.iter() {
             match cell {
                 Cell::Known(dist, _, sign) => {
@@ -901,8 +902,32 @@ impl FmmDomain {
             }
         }
 
+        //let min_v = 100000.0;
+        //let max_v = -1000000.0;
+
+        //for v in values.iter() {
+        //    if v > max_v { max_v = v; } 
+        //    if v < min_v { min_v = v; } 
+        //}
+
         println!("MIN VALUE :: {}", self.min_value);
         println!("MAX VALUE :: {}", self.max_value);
+
+        let mut result: Vec<f32> = Vec::new();
+
+        //for i in values.iter() {
+        //        result.push(
+        //            FmmDomain::map_range(
+        //                min_v,
+        //                max_v,
+        //                0.0,
+        //                1.0,
+        //                i)
+        //        );
+        //        result.push(0.0);
+        //        result.push(0.0);
+        //        result.push(0.0);
+        //}
 
         let mut result: Vec<f32> = Vec::new();
         for i in 0..self.domain.data.len() {

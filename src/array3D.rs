@@ -1,8 +1,16 @@
 use crate::bvh::{BBox}; 
 use cgmath::{Vector3};
+use crate::misc; //::map_range;
 
 #[derive(Copy, Clone, Debug)]
 pub struct CellIndex {
+    pub i: u32,
+    pub j: u32,
+    pub k: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct BoundaryIndex {
     pub i: u32,
     pub j: u32,
     pub k: u32,
@@ -17,35 +25,165 @@ pub struct Coordinate {
 
 //type FmmDomain = Array3D<u32, f32, fmm:Cell>; 
 
-pub struct Array3D<T> {
+pub struct Array3D<T, V> {
     pub dimension: (std::ops::Range<u32>, std::ops::Range<u32>, std::ops::Range<u32>),
     pub base_position: Coordinate,
     pub grid_length: f32,
     pub data: Vec<T>,
-    pub capacity: usize,
+    boundary_data: Vec<V>,
+    capacity: usize,
+    boundary_capacity: usize,
 }
 
-impl<T: Copy> Array3D<T> {
+impl<T: Copy, V: Copy> Array3D<T,V> {
 
     pub fn new(dimension: (u32, u32, u32), base_position: Coordinate, grid_length: f32) -> Self {
         assert!(grid_length > 0.0, "Array3D.new: grid_length {} > 0.0", grid_length);
 
         let data: Vec<T> = Vec::with_capacity((dimension.0 as usize) * (dimension.1 as usize) * (dimension.2 as usize));
+        let boundary_data: Vec<V> = Vec::with_capacity(((dimension.0 + 1) * (dimension.1 + 1) * (dimension.2 + 1)) as usize);
         let capacity = dimension.0 * dimension.1 * dimension.2;
+        let boundary_capacity = (dimension.0 + 1) * (dimension.1 + 1) * (dimension.2 + 1);
 
         Self {
             dimension: (0..dimension.0, 0..dimension.1, 0..dimension.2),
             base_position: base_position,
             grid_length: grid_length,
             data: data,
+            boundary_data: boundary_data,
             capacity: capacity as usize,
+            boundary_capacity: boundary_capacity as usize,
         }
     }
 
+    pub fn set_data_vec(&mut self, data: Vec<T>) {
+        assert!(data.len() == self.capacity, "The size of given vector and capacity mismatch");
+        self.data = data;
+    }
+
+    pub fn set_boundary_vec_data(&mut self, boundary_data: Vec<V>) {
+        assert!(boundary_data.len() == self.boundary_capacity, "The size of given vector and boundary_capacity mismatch");
+        self.boundary_data = boundary_data;
+    }
+
+    // pub fn data_to_vec<O>(&self, f: Fn(T) -> O) -> Vec<O> {
+
+    //     let result = self.data.into_iter().map(f).collect();
+    //     result
+    // }
+
+    pub fn map_ijk_bcoord(&self, boundary_index: &BoundaryIndex) -> Option<Coordinate> {
+
+        let x = (boundary_index.i as f32 - 0.5) * self.grid_length + self.base_position.x;
+        let y = (boundary_index.j as f32 - 0.5) * self.grid_length + self.base_position.y;
+        let z = (boundary_index.k as f32 - 0.5) * self.grid_length + self.base_position.z;
+
+        // println!("i == {}, j == {}, k == {}", boundary_index.i, boundary_index.j, boundary_index.k);
+        // println!("x == {} :: y = {} :: z = {}", x, y, z);
+
+        Some(Coordinate {
+            x: x,
+            y: y,
+            z: z,
+        })
+    }
+
+    // pub fn map_xyz_to_closest_bindex(&self, coordinate: &Coordinate) -> Option<BoundaryIndex> {
+    //     None
+    // }
+
+    pub fn map_xyz_to_nearest_boundary_index(&self, coordinate: &Coordinate) -> Option<BoundaryIndex> {
+
+        // Move and scale coordinate to match CellIndex space.
+        let x = ((((coordinate.x - self.base_position.x) / self.grid_length)) as f32);
+        let y = ((((coordinate.y - self.base_position.y) / self.grid_length)) as f32);
+        let z = ((((coordinate.z - self.base_position.z) / self.grid_length)) as f32);
+
+        let mut i = x.ceil() as i32; //x as u32;
+        let mut j = y.ceil() as i32; //y as u32;
+        let mut k = z.ceil() as i32; //z as u32;
+
+        assert!(i >= 0 && j >= 0 && k >= 0, format!("map_xyz_to_nearest_boundary_index :: {} < 0 || {} < 0 || {} < 0", i, j, k)); 
+
+        // println!("x == {}, y == {}, z == {}", x, y, z); 
+        // println!("i == {}, j == {}, k == {}", i, j, k);
+
+        let cell_index = BoundaryIndex { i: i as u32, j: j as u32, k: k as u32 };
+
+        // self.validate_cell_index(&CellIndex {i: i, j: j, k: k})..ok()?;
+
+        Some(cell_index)
+    }
+
+    pub fn boundary_index_to_xyz(&self, boundary_index: &BoundaryIndex) -> Option<Coordinate> {
+         
+        self.validate_boundary_index(&boundary_index).ok()?;
+
+        let x = boundary_index.i as f32 * self.grid_length + self.base_position.x - 0.5;
+        let y = boundary_index.j as f32 * self.grid_length + self.base_position.y - 0.5;
+        let z = boundary_index.k as f32 * self.grid_length + self.base_position.z - 0.5;
+
+        Some(Coordinate {
+            x: x,
+            y: y,
+            z: z,
+        })
+    }
+
+    // No bound checking for boundary indices.
+    pub fn get_cell_cube(&self, cell_index: &CellIndex) -> [V ; 8] {
+        self.validate_cell_index(&cell_index).unwrap();
+
+        let i = cell_index.i;
+        let j = cell_index.j;
+        let k = cell_index.k;
+        let v0: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i, j: j, k: k}).unwrap() as usize
+        ];
+        let v1: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i, j: j+1, k: k}).unwrap() as usize
+        ];
+        let v2: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i+1, j: j+1, k: k}).unwrap() as usize
+        ];
+        let v3: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i+1, j: j, k: k}).unwrap() as usize
+        ];
+        let v4: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i, j: j, k: k+1}).unwrap() as usize
+        ];
+        let v5: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i, j: j+1, k:k+1}).unwrap() as usize
+        ];
+        let v6: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i+1, j: j+1, k:k+1}).unwrap() as usize
+        ];
+        let v7: V = self.boundary_data[
+            self.boundary_index_to_array_index(&BoundaryIndex {i: i+1, j: j, k: k+1}).unwrap() as usize
+        ];
+        [v0, v1, v2, v3, v4, v5, v6, v7]
+    }
+
+    pub fn boundary_index_to_array_index(&self, boundary_index: &BoundaryIndex) -> Option<u32> {
+        
+        self.validate_boundary_index(&boundary_index).ok()?;
+
+        let x_range = self.dimension.0.end; 
+        let y_range = self.dimension.1.end; 
+        let index = boundary_index.i + boundary_index.j * x_range + boundary_index.k * x_range * y_range;
+
+        assert!(index < self.boundary_data.len() as u32,
+            format!("boundary_index_to_array(CellIndex {{ i:{}, j:{}, k:{}}}) :: {} (index) > {}.",
+                boundary_index.i, boundary_index.j, boundary_index.k, index, self.capacity));
+
+        Some(index)
+    }
+
     /// Map given cell_index to a scaled and positioned x,y,z koordinates.
+    /// NOT NEEDED.
     pub fn map_ijk_xyz(&self, cell_index: &CellIndex) -> Option<Coordinate> {
          
-        //self.validate_cell_index(&cell_index).ok()?;
+        self.validate_cell_index(&cell_index).ok()?;
 
         let x = cell_index.i as f32 * self.grid_length + self.base_position.x;
         let y = cell_index.j as f32 * self.grid_length + self.base_position.y;
@@ -59,6 +197,7 @@ impl<T: Copy> Array3D<T> {
     }
 
     /// Map given coordinate to CellIndex.
+    /// NOT NEEDED
     pub fn map_xyz_ijk(&self, coordinate: &Coordinate, ceil: bool) -> Option<CellIndex> {
          
         // Move and scale coordinate to match CellIndex space.
@@ -100,6 +239,27 @@ impl<T: Copy> Array3D<T> {
             );
             Err(format!("validate_cell_index :: cell index out of bounds. CellIndex(i: {}, j: {}, k: {}) not in range {}.", 
                     cell_index.i, cell_index.j, cell_index.k, range))
+           }
+           else {
+                Ok(())
+           }
+    }
+
+    /// Boundary check for given cell index.
+    pub fn validate_boundary_index(&self, boundary_index: &BoundaryIndex) -> Result<(), String> {
+        if boundary_index.i >= self.dimension.0.end + 1 ||
+           boundary_index.j >= self.dimension.1.end + 1 ||
+           boundary_index.k >= self.dimension.2.end + 1  {
+            let range = format!("[{}, {}, {}] - [{}, {}, {}]", 
+                self.dimension.0.start,
+                self.dimension.1.start,
+                self.dimension.2.start,
+                self.dimension.0.end + 1,
+                self.dimension.1.end + 1,
+                self.dimension.2.end + 1
+            );
+            Err(format!("validate_boundary_index :: boundary index out of bounds. BoundaryIndex(i: {}, j: {}, k: {}) not in range {}.", 
+                    boundary_index.i, boundary_index.j, boundary_index.k, range))
            }
            else {
                 Ok(())
@@ -269,12 +429,12 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array3D_creation01() {
-        let array: Array3D<f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, -0.1);
+        let array: Array3D<f32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, -0.1);
     }
 
     #[test]
     fn test_array_map_coordinate01() {
-        let array: Array3D<f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let array: Array3D<f32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         for i in array.dimension.0.clone() {
         for j in array.dimension.1.clone() {
         for k in array.dimension.2.clone() {
@@ -292,7 +452,7 @@ mod test_fmm {
 
     #[test]
     fn test_array_map_coordinate02() {
-        let array: Array3D<f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let array: Array3D<f32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         let cell_index = CellIndex {i: 2, j:3, k:4};
         let cell_should_be = CellIndex {i: 3, j:4, k:5};
         let xyz_coordinate = array.map_ijk_xyz(&cell_index).unwrap();
@@ -307,7 +467,7 @@ mod test_fmm {
 
     #[test]
     fn test_array_01() {
-        let array: Array3D<f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let array: Array3D<f32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         for i in array.dimension.0.clone() {
         for j in array.dimension.1.clone() {
         for k in array.dimension.2.clone() {
@@ -330,7 +490,7 @@ mod test_fmm {
 
     #[test]
     fn test_array_02() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.data = vec![0 ; array.capacity];
         for i in array.dimension.0.clone() {
         for j in array.dimension.1.clone() {
@@ -356,7 +516,7 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array_03() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         let cell_index = CellIndex {i: 3, j:2, k:1};
 
         array.set_data(cell_index, 123).unwrap();
@@ -365,14 +525,14 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array_04() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.set_data_index(100, 123).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_array_05() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         let cell_index = CellIndex {i: 3, j:2, k:1};
         array.get_data(cell_index).unwrap();
     }
@@ -380,14 +540,14 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array_06() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.get_data_index(100).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_array_07() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.data = vec![0 ; array.capacity-3];
         let cell_index = CellIndex {i: 3, j:2, k:1};
         array.set_data(cell_index, 123).unwrap();
@@ -396,7 +556,7 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array_08() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.data = vec![0 ; array.capacity];
         let cell_index = CellIndex {i: 10, j:2, k:1};
         array.set_data(cell_index, 123).unwrap();
@@ -405,13 +565,13 @@ mod test_fmm {
     #[test]
     #[should_panic]
     fn test_array_09() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         array.get_data_index(array.capacity as u32).unwrap();
     }
 
     #[test]
     fn test_array_10() {
-        let mut array: Array3D<u32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         let cell_index = array.map_xyz_ijk(&Coordinate {x: 5.11, y: 5.21, z: 5.11 }, false).unwrap();
         assert!(cell_index.i == 1 && cell_index.j == 2 && cell_index.k == 1); 
 
@@ -427,7 +587,7 @@ mod test_fmm {
 
     #[test]
     fn test_array_11() {
-        let mut array: Array3D<u32> = Array3D::new((23, 23, 23), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
+        let mut array: Array3D<u32,f32> = Array3D::new((23, 23, 23), Coordinate {x: 5.0, y: 5.0, z: 5.0 }, 0.1);
         let aabb = BBox::create_from_line(
             &Vector3::<f32>::new(5.23, 6.11, 6.50), 
             &Vector3::<f32>::new(6.00, 6.90, 7.11)
@@ -443,4 +603,70 @@ mod test_fmm {
             range.2.end   == 22
         );
     }
+
+    #[test]
+    fn test_array_12() {
+
+        // Base position coordinates.
+        let bx = 1.0;
+        let by = 0.0;
+        let bz = 2.0;
+        let x = 1.0;
+        let y = 1.4;
+        let z = 1.6;
+        let base_position = Coordinate { x: bx, y: by, z: bz };
+        let grid_length = 0.5;
+        let should_be_i = 0;
+        let should_be_j = 3;
+        let should_be_k = 0;
+
+        let mut array: Array3D<u32,f32> = Array3D::new((10, 10, 10), base_position, grid_length);
+        array.data = vec![0 ; array.capacity];
+        array.boundary_data = vec![0.0 ; array.boundary_capacity];
+        let boundary_coordinate = array.map_xyz_to_nearest_boundary_index(&Coordinate{ x: x, y: y, z: z }); 
+        match boundary_coordinate {
+            None => { panic!("Failed to get boundary coordinate from coordinate {{ x: {}, y: {}, z: {} }}.", x, y, z); }
+            Some(BoundaryIndex{i, j, k}) => {
+                    assert!(i == should_be_i && j == should_be_j && k == should_be_k, format!("i :: {} == {} (should_be), {} == {}, {} == {}", i, should_be_i, j, should_be_j, k, should_be_k)); 
+                }
+            }
+        }
+
+    #[test]
+    fn test_array_13() {
+
+        // Baseposition coordinates.
+        let bx = 1.0;
+        let by = 0.0;
+        let bz = 2.0;
+        let i = 0;
+        let j = 2;
+        let k = 3;
+        let should_be_x = 0.75;
+        let should_be_y = 0.75;
+        let should_be_z = 3.25;
+        let base_position = Coordinate { x: bx, y: by, z: bz };
+        let grid_length = 0.5;
+
+        let mut array: Array3D<u32,f32> = Array3D::new((20, 20, 20), base_position, grid_length);
+        array.data = vec![0 ; array.capacity];
+        array.boundary_data = vec![0.0 ; array.boundary_capacity];
+        let boundary_coordinate = array.map_ijk_bcoord(&BoundaryIndex{ i: i, j: j, k: k }); 
+        match boundary_coordinate {
+            None => { panic!("Failed to get boundary coordinate from BoundaryIndex {{ i: {}, j: {}, k: {} }}.", i, j, k); }
+            Some(Coordinate{x, y, z}) => {
+                    assert!(x == should_be_x && y == should_be_y && z == should_be_z, format!("{} != should_be_x {} || {} != {} || {} != {}", x, should_be_x, y, should_be_y, z, should_be_z)); 
+                }
+            }
+        }
+
+        //let range = array.aabb_to_range(&aabb).unwrap();
+        //assert!(
+        //    range.0.start == 2  && 
+        //    range.1.start == 11 && 
+        //    range.2.start == 15 && 
+        //    range.0.end   == 11 && 
+        //    range.1.end   == 20 && 
+        //    range.2.end   == 22
+        //);
 }

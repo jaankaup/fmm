@@ -447,3 +447,9 @@ pub fn encode_rgba_u32(r: u8, g: u8, b: u8, a: u8) -> u32 {
 
   // result
 }
+
+/// [a1..a2] -> [b1..b2]. s value to scale.
+pub fn map_range(a1: f32, a2: f32, b1: f32, b2: f32, s: f32) -> f32 {
+    b1 + (s - a1) * (b2 - b1) / (a2 - a1)
+}
+
